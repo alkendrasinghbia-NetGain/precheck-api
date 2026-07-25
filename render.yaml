@@ -1,0 +1,22 @@
+# Render Blueprint — Precheck AI demo backend
+# Deploy: push server.py + requirements.txt + this file to a GitHub repo,
+# then in Render: New → Blueprint → select the repo.
+services:
+  - type: web
+    name: precheck-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PRECHECK_API_KEY
+        sync: false   # set in the Render dashboard; leave empty for an open demo
+      - key: PRECHECK_SECRET
+        generateValue: true          # signs session tokens
+      - key: PRECHECK_EPIC_PRIVATE_KEY
+        sync: false   # paste the contents of epic_private.pem so the deployed
+                      # instance keeps signing with the key Epic already trusts
+# Note: on the free plan the filesystem is ephemeral — precheck.db resets on
+# each deploy/restart, which is acceptable (and arguably desirable) for a
+# public fake-data demo. For persistence use a paid disk or move Repo to
+# Postgres (single-class swap by design).

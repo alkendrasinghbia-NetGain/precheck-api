@@ -1,0 +1,2626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>NetGain Innovations — Oncology RCM Workspace</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          ink: 'var(--ink)', sub: 'var(--sub)', line: 'var(--line)', page: 'var(--page)',
+          card: 'var(--card)', chip: 'var(--chip)', hoverbg: 'var(--hover)',
+          accent: 'var(--accent)', accentbg: 'var(--accent-bg)', accentsel: 'var(--accent-sel)',
+          okt: 'var(--okt)', okbg: 'var(--okbg)',
+          warnt: 'var(--warnt)', warnbg: 'var(--warnbg)',
+          badt: 'var(--badt)', badbg: 'var(--badbg)',
+        },
+        fontFamily: {
+          sans: ['Inter', 'Segoe UI', 'system-ui', 'sans-serif'],
+          mono: ['ui-monospace', 'Cascadia Code', 'Consolas', 'monospace'],
+        },
+      }
+    }
+  }
+</script>
+<style>
+  :root {
+    --page:#F6F7F9; --card:#FFFFFF; --ink:#1A2233; --sub:#647080; --line:#E5E8EE;
+    --chip:#F1F5F9; --hover:#F8FAFC;
+    --accent:#2F5FE3; --accent-bg:#EAF0FD; --accent-sel:#EFF4FE;
+    --okt:#16794C; --okbg:#E5F5EC; --warnt:#92600A; --warnbg:#FCF0DC; --badt:#B3261E; --badbg:#FCE8E6;
+  }
+  body[data-accent="indigo"] { --accent:#6D28D9; --accent-bg:#F0EAFD; --accent-sel:#F5F0FE; }
+  body[data-accent="orange"] { --accent:#EA580C; --accent-bg:#FDEBDD; --accent-sel:#FEF3EA; }
+  body.dark {
+    --page:#0F1520; --card:#161D2B; --ink:#E8ECF4; --sub:#93A0B4; --line:#273248;
+    --chip:#1F2A3D; --hover:#1B2436;
+    --accent:#5B8AF5; --accent-bg:#1B2A4A; --accent-sel:#182338;
+    --okt:#3ECF8E; --okbg:#123222; --warnt:#E5B04A; --warnbg:#33270E; --badt:#F0716A; --badbg:#3A1714;
+  }
+  body.dark[data-accent="indigo"] { --accent:#9B72F2; --accent-bg:#2A1E4A; --accent-sel:#221A3A; }
+  body.dark[data-accent="orange"] { --accent:#FF9457; --accent-bg:#3B2311; --accent-sel:#2E1C0E; }
+  body { background: var(--page); }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+</style>
+</head>
+<body class="text-ink font-sans">
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+// URL params let a deployed copy point at a hosted backend: app.html?api=https://...&key=...
+const _qp = new URLSearchParams(location.search);
+if (_qp.get("api")) localStorage.setItem("ng_api", _qp.get("api"));
+if (_qp.get("key")) localStorage.setItem("ng_key", _qp.get("key"));
+const DEFAULT_API_BASE = localStorage.getItem("ng_api") || "http://localhost:8000";
+
+async function api(base, path, options) {
+  const headers = { "Content-Type": "application/json" };
+  const user = localStorage.getItem("ng_user");
+  const key = localStorage.getItem("ng_key");
+  const token = localStorage.getItem("ng_token");
+  if (user) headers["X-User"] = user;
+  if (key) headers["X-API-Key"] = key;
+  if (token) headers["Authorization"] = "Bearer " + token;
+  const res = await fetch(base + path, { headers, ...options });
+  // Any 401 outside the sign-in endpoints means the stored session is dead —
+  // clear it and fall back to the login screen.
+  const isLoginCall = path.startsWith("/v1/auth/login") || path.startsWith("/v1/auth/mfa/verify")
+    || path.startsWith("/v1/auth/mfa/demo-code") || path.startsWith("/v1/auth/mfa/resend-sms");
+  if (res.status === 401 && !isLoginCall) {
+    localStorage.removeItem("ng_token");
+    window.dispatchEvent(new Event("ng-auth-expired"));
+  }
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
+  return res.json();
+}
+
+// ---------------------------------------------------------------- helpers
+function Pill({ children, tone }) {
+  const tones = {
+    ok: "bg-okbg text-okt", warn: "bg-warnbg text-warnt", bad: "bg-badbg text-badt",
+    blue: "bg-accentbg text-accent", gray: "bg-chip text-sub",
+  };
+  return <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ${tones[tone] || tones.gray}`}>{children}</span>;
+}
+function riskTone(l) { return l === "LOW" ? "ok" : l === "MEDIUM" ? "warn" : "bad"; }
+function riskWord(l) { return l === "LOW" ? "Low" : l === "MEDIUM" ? "Medium" : l === "HIGH" ? "High" : "Critical"; }
+function readyTone(s) { return s === "READY" ? "ok" : s === "ACTION_NEEDED" ? "warn" : "bad"; }
+function readyWord(s) { return s === "READY" ? "Ready" : s === "ACTION_NEEDED" ? "Action needed" : "Blocked"; }
+function statusTone(s) { return s === "RESOLVED" ? "ok" : s === "WAIVED" ? "gray" : s === "IN_PROGRESS" ? "warn" : "bad"; }
+function money(n) { return "$" + Number(n || 0).toLocaleString(); }
+
+function Card({ children, className }) {
+  return <div className={`bg-card border border-line rounded-xl ${className || ""}`}>{children}</div>;
+}
+function MonoChip({ children }) {
+  return <span className="font-mono text-xs bg-chip text-sub px-2 py-0.5 rounded whitespace-nowrap">{children}</span>;
+}
+function CheckIcon({ ok, warn }) {
+  const bg = ok ? "bg-okt" : warn ? "bg-warnt" : "bg-badt";
+  return (
+    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full shrink-0 ${bg}`}>
+      {ok
+        ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3.5"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round"/></svg>
+        : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3.5"><path d="M6 6l12 12M18 6L6 18" strokeLinecap="round"/></svg>}
+    </span>
+  );
+}
+function Label({ children }) { return <label className="block text-[11px] uppercase tracking-wider text-sub font-semibold mb-1">{children}</label>; }
+function TextInput(props) {
+  return <input {...props} className={"w-full bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:border-accent " + (props.className || "")} />;
+}
+function Select(props) {
+  return <select {...props} className={"w-full bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:border-accent " + (props.className || "")}>{props.children}</select>;
+}
+function Button({ children, onClick, variant, disabled, type }) {
+  const v = {
+    primary: "bg-accent text-white hover:bg-blue-700",
+    ghost: "bg-card border border-line text-ink hover:border-accent",
+    danger: "bg-badt text-white hover:bg-red-800",
+  };
+  return <button type={type || "button"} onClick={onClick} disabled={disabled}
+    className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition disabled:opacity-50 ${v[variant || "primary"]}`}>{children}</button>;
+}
+function ErrorBanner({ msg }) {
+  return msg ? <div className="mb-4 bg-badbg border border-badt/20 text-badt text-sm rounded-lg px-4 py-3">{msg}</div> : null;
+}
+function SummaryTile({ n, label, tone }) {
+  const tones = { ok: "bg-okbg text-okt", warn: "bg-warnbg text-warnt", bad: "bg-badbg text-badt", gray: "bg-chip text-sub" };
+  return (
+    <div className={`rounded-lg px-4 py-3 text-center ${tones[tone]}`}>
+      <div className="text-xl font-bold font-mono">{n}</div>
+      <div className="text-[10px] font-bold uppercase tracking-widest">{label}</div>
+    </div>
+  );
+}
+function LayerChip({ layer, dark }) {
+  return <span className={`font-mono text-[11px] font-bold px-1.5 py-0.5 rounded ${dark ? "bg-ink text-page" : "bg-accentbg text-accent"}`}>{layer}</span>;
+}
+function SectionHead({ title, right, chip }) {
+  return (
+    <div className="px-5 py-3.5 border-b border-line flex items-center gap-2.5">
+      {chip}
+      <h3 className="font-bold">{title}</h3>
+      {right && <span className="text-xs text-sub ml-auto">{right}</span>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Pre-Visit
+function PrevisitTab({ apiBase, onExceptionsChanged, navReq, go }) {
+  const [cases, setCases] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await api(apiBase, "/v1/oncology/previsit/cases");
+      setCases(data);
+      setSelected(prev => prev ? data.find(c => c.case_id === prev.case_id) || data[0] : data[0]);
+      setError(null);
+    } catch (e) { setError(e.message); }
+  }, [apiBase]);
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (navReq && navReq.caseId && cases.length) {
+      const c = cases.find(x => x.case_id === navReq.caseId);
+      if (c) setSelected(c);
+    }
+  }, [navReq && navReq.token, cases]);
+
+  const passCount = c => [c.checks.eligibility === "ACTIVE",
+    c.checks.cob !== "UNRESOLVED" && c.checks.cob !== "UNKNOWN",
+    c.checks.network_status === "IN_NETWORK",
+    !c.checks.referral_required || c.checks.referral_on_file].filter(Boolean).length;
+  const ready = cases.filter(c => c.readiness_status === "READY").length;
+  const action = cases.filter(c => c.readiness_status === "ACTION_NEEDED").length;
+  const blocked = cases.filter(c => c.readiness_status === "BLOCKED").length;
+
+  const apptWord = c => {
+    const d = new Date(c.appointment_date + "T00:00:00");
+    const today = new Date(); today.setHours(0,0,0,0);
+    const diff = Math.round((d - today) / 86400000);
+    return diff <= 1 ? "Tomorrow" : `In ${diff} days`;
+  };
+
+  const checkRows = c => [
+    { ok: c.checks.eligibility === "ACTIVE", title: "DOS eligibility",
+      sub: c.checks.eligibility === "ACTIVE" ? `Active on ${c.appointment_date} · verified via 270/271 today` : `Status ${c.checks.eligibility} — verify coverage before the visit` },
+    { ok: c.checks.cob !== "UNRESOLVED" && c.checks.cob !== "UNKNOWN", title: "Coordination of benefits",
+      sub: c.checks.cob === "RESOLVED" ? "Primary only — no COB conflict" : `COB ${c.checks.cob}` },
+    { ok: c.checks.network_status === "IN_NETWORK", title: "Network status",
+      sub: c.checks.network_status === "IN_NETWORK" ? "Rendering provider in-network for this plan" : "Provider out-of-network for this plan" },
+    { ok: !c.checks.referral_required || c.checks.referral_on_file, title: "Referral / auth on file",
+      sub: c.checks.referral_required ? (c.checks.referral_on_file ? "Referral approved · on file" : "Required referral is missing") : "Referral not required for this plan" },
+  ];
+
+  return (
+    <div>
+      <ErrorBanner msg={error} />
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <div className="lg:col-span-2">
+          <Card className="p-4">
+            <div className="flex items-baseline justify-between mb-1">
+              <h2 className="font-bold text-ink">Pre-visit readiness</h2>
+              <span className="font-mono text-xs text-sub">{cases.length} scheduled</span>
+            </div>
+            <p className="text-xs text-sub mb-3">Nightly T-2 sweep of scheduled oncology visits</p>
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              <SummaryTile n={ready} label="Ready" tone="ok" />
+              <SummaryTile n={action} label="Action" tone="warn" />
+              <SummaryTile n={blocked} label="Blocked" tone="bad" />
+            </div>
+            <div className="divide-y divide-line -mx-4">
+              {cases.map(c => (
+                <div key={c.case_id} onClick={() => setSelected(c)}
+                  className={`px-4 py-3 cursor-pointer border-l-[3px] ${selected && selected.case_id === c.case_id ? "border-l-accent bg-accentsel" : "border-l-transparent hover:bg-hoverbg"}`}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold">{c.patient_name || c.patient_ref}</span>
+                    <Pill tone={readyTone(c.readiness_status)}>{readyWord(c.readiness_status)}</Pill>
+                  </div>
+                  <div className="text-xs text-sub mt-0.5">{passCount(c)}/4 checks pass · {c.regimen || "Scheduled visit"}</div>
+                  <div className="text-xs mt-0.5">
+                    <span className="text-accent font-semibold">{apptWord(c)}</span>
+                    <span className="font-mono text-sub"> · {c.appt_time || ""} · {c.appointment_date}</span>
+                  </div>
+                </div>
+              ))}
+              {cases.length === 0 && <p className="px-4 py-3 text-sub text-sm">No cases scheduled.</p>}
+            </div>
+          </Card>
+        </div>
+
+        <div className="lg:col-span-3 space-y-4">
+          {selected ? (
+            <React.Fragment>
+              <Card className="p-5">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-2xl font-bold">{selected.patient_name || selected.patient_ref}</h2>
+                  <Pill tone={readyTone(selected.readiness_status)}>{readyWord(selected.readiness_status)}</Pill>
+                </div>
+                <p className="text-sm text-sub mt-1">{selected.age_sex} · {selected.cancer}</p>
+                <p className="text-sm text-sub">{selected.regimen} · {selected.physician}</p>
+                <div className={`mt-4 rounded-lg px-4 py-3 flex items-center gap-3 ${selected.readiness_status === "READY" ? "bg-okbg" : selected.readiness_status === "ACTION_NEEDED" ? "bg-warnbg" : "bg-badbg"}`}>
+                  <CheckIcon ok={selected.readiness_status === "READY"} warn={selected.readiness_status === "ACTION_NEEDED"} />
+                  <div>
+                    <div className={`text-[10px] font-bold uppercase tracking-widest ${selected.readiness_status === "READY" ? "text-okt/70" : selected.readiness_status === "ACTION_NEEDED" ? "text-warnt/70" : "text-badt/70"}`}>Gate to claim precheck</div>
+                    <div className={`font-semibold ${selected.readiness_status === "READY" ? "text-okt" : selected.readiness_status === "ACTION_NEEDED" ? "text-warnt" : "text-badt"}`}>
+                      {selected.readiness_status === "READY" ? "Clears into claim precheck"
+                        : selected.readiness_status === "ACTION_NEEDED" ? "Action needed — resolve before the visit"
+                        : "Blocked — resolve exceptions before the visit"}
+                    </div>
+                  </div>
+                </div>
+              </Card>
+              <Card>
+                <SectionHead title="Pre-visit checks" right="Triggered: Nightly sweep · T-2" />
+                <div className="divide-y divide-line">
+                  {checkRows(selected).map((r, i) => (
+                    <div key={i} className="px-5 py-3.5 flex items-start gap-3">
+                      <CheckIcon ok={r.ok} />
+                      <div>
+                        <div className="font-semibold text-sm">{r.title}</div>
+                        <div className="text-xs text-sub mt-0.5">{r.sub}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+              {selected.exceptions_created.length > 0 && (
+                <Card className="p-5">
+                  <h3 className="font-bold mb-1.5">Next action</h3>
+                  <p className="text-sm text-sub">{selected.next_action}</p>
+                  <p className="text-xs text-sub mt-2">Linked exceptions: {selected.exceptions_created.map(id => (
+                    <button key={id} onClick={() => go("exceptions", { excId: id })}
+                      className="font-mono text-xs bg-accentbg text-accent px-2 py-0.5 rounded mr-1 hover:underline">{id} →</button>
+                  ))}</p>
+                </Card>
+              )}
+            </React.Fragment>
+          ) : <Card className="p-5 text-sub text-sm">Select a case to see its readiness detail.</Card>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Denial Prevention
+function DenialTab({ apiBase, navReq, go }) {
+  const [claims, setClaims] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [filter, setFilter] = useState("ALL");
+  const [error, setError] = useState(null);
+  const [denyCarc, setDenyCarc] = useState("197");
+  const [denyRarc, setDenyRarc] = useState("");
+  const [denyPaid, setDenyPaid] = useState("0");
+  const [denyMsg, setDenyMsg] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await api(apiBase, "/v1/oncology/precheck/claims");
+      setClaims(data);
+      setSelected(prev => prev ? data.find(c => c.claim_id === prev.claim_id) || data[0] : data[0]);
+      setError(null);
+    } catch (e) { setError(e.message); }
+  }, [apiBase]);
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!navReq || !claims.length) return;
+    if (navReq.claimId) {
+      const c = claims.find(x => x.claim_id === navReq.claimId);
+      if (c) setSelected(c);
+    } else if (navReq.codes) {
+      const codeSet = new Set(navReq.codes);
+      const c = claims.find(x => x.jcodes.some(j => codeSet.has(j)) || x.cpt_codes.some(p => codeSet.has(p)));
+      if (c) setSelected(c);
+    }
+  }, [navReq && navReq.token, claims]);
+
+  const highCount = claims.filter(c => c.risk_level === "HIGH" || c.risk_level === "CRITICAL").length;
+  const preauthCount = claims.filter(c => c.auth_required).length;
+  const shown = filter === "ALL" ? claims
+    : filter === "HIGH" ? claims.filter(c => c.risk_level === "HIGH" || c.risk_level === "CRITICAL")
+    : claims.filter(c => c.auth_required);
+
+  const biomarkers = c => {
+    const b = [];
+    if (c.cdx_status.pdl1_present) b.push({ dot: "bg-accent", text: `PD-L1 ${c.cdx_status.pdl1_score >= 50 ? "High" : c.cdx_status.pdl1_score + "%"}` });
+    if (c.cdx_status.her2_present) b.push({ dot: "bg-okt", text: "HER2 positive" });
+    if (c.cdx_status.egfr_present) b.push({ dot: "bg-warnt", text: "EGFR mutation" });
+    if (c.cdx_status.brca_present) b.push({ dot: "bg-badt", text: "BRCA variant" });
+    if (c.line) b.push({ dot: "bg-warnt", text: `Line · ${c.line}` });
+    return b;
+  };
+  const subLine = c => {
+    const cancer = (c.nccn_match.cancer_type || "").split("/")[0].trim();
+    const marker = c.cdx_status.pdl1_present ? "PD-L1 High" : c.cdx_status.her2_present ? "HER2+" : c.cdx_status.egfr_present ? "EGFR+" : c.primary_dx;
+    return `${cancer || c.primary_dx} · ${marker}`;
+  };
+
+  return (
+    <div>
+      <ErrorBanner msg={error} />
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <div className="lg:col-span-2">
+          <Card className="p-4">
+            <div className="flex items-baseline justify-between mb-1">
+              <h2 className="font-bold">Work queue</h2>
+              <span className="font-mono text-xs text-sub">{claims.length} claims</span>
+            </div>
+            <p className="text-xs text-sub mb-3">Pre-submission review · sorted by denial risk</p>
+            <div className="flex gap-2 mb-2 flex-wrap">
+              <button onClick={() => setFilter("ALL")} className={`px-3 py-1 rounded-full text-xs font-semibold ${filter === "ALL" ? "bg-accent text-white" : "bg-chip text-sub"}`}>All claims · {claims.length}</button>
+              <button onClick={() => setFilter("HIGH")} className={`px-3 py-1 rounded-full text-xs font-semibold ${filter === "HIGH" ? "bg-accent text-white" : "bg-chip text-sub"}`}>High risk · {highCount}</button>
+              <button onClick={() => setFilter("AUTH")} className={`px-3 py-1 rounded-full text-xs font-semibold ${filter === "AUTH" ? "bg-accent text-white" : "bg-chip text-sub"}`}>Pre-auth · {preauthCount}</button>
+            </div>
+            <div className="divide-y divide-line -mx-4">
+              {shown.map(c => (
+                <div key={c.claim_id} onClick={() => setSelected(c)}
+                  className={`px-4 py-3 cursor-pointer border-l-[3px] ${selected && selected.claim_id === c.claim_id ? "border-l-accent bg-accentsel" : "border-l-transparent hover:bg-hoverbg"}`}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold">{c.patient_name || c.claim_id}</span>
+                    <span className="flex items-center gap-1.5">
+                      {c.denied && <Pill tone="bad">Denied</Pill>}
+                      <Pill tone={riskTone(c.risk_level)}>{riskWord(c.risk_level)}</Pill>
+                    </span>
+                  </div>
+                  <div className="text-xs text-sub mt-0.5">{subLine(c)}</div>
+                  <div className="flex items-center justify-between mt-0.5">
+                    <span className="text-xs text-sub">{c.payer_name}</span>
+                    <span className="font-mono text-sm font-semibold">{money(c.billed_amount)}</span>
+                  </div>
+                </div>
+              ))}
+              {shown.length === 0 && <p className="px-4 py-3 text-sub text-sm">No claims match this filter.</p>}
+            </div>
+          </Card>
+        </div>
+
+        <div className="lg:col-span-3 space-y-4">
+          {selected ? (
+            <React.Fragment>
+              <Card className="p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <h2 className="text-2xl font-bold">{selected.patient_name || selected.claim_id}</h2>
+                      <MonoChip>MRN {selected.mrn || selected.claim_id}</MonoChip>
+                    </div>
+                    <p className="text-sm text-sub mt-1">{selected.age_sex} · {(selected.nccn_match.cancer_type || "").split("/")[0].trim()} · Service date {selected.dos}</p>
+                    {selected.denied && (
+                      <div className="mt-2 bg-badbg rounded-lg px-3 py-2 text-xs">
+                        <div className="font-bold text-badt">DENIED {selected.denied_date} · CARC {selected.denial_carc}{selected.denial_rarc ? ` / RARC ${selected.denial_rarc}` : ""}</div>
+                        <div className="text-badt/90 mt-0.5">{selected.denial_reason}</div>
+                        <div className="text-badt/80 mt-1 font-mono">
+                          Billed {money(selected.billed_amount)} · Paid {money(selected.paid_amount || 0)} · At risk {money((selected.billed_amount || 0) - (selected.paid_amount || 0))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-bold font-mono">{money(selected.billed_amount)}</div>
+                    <div className="text-sm text-sub">{selected.payer_name}</div>
+                    <div className="text-xs text-sub">{selected.plan_name || selected.plan_type.replaceAll("_", " ")}</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-line">
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-sub">Diagnosis</div>
+                    <div className="font-semibold text-sm mt-0.5">{(selected.nccn_match.cancer_type || "—").split("/")[0].trim()} carcinoma</div>
+                    <div className="font-mono text-xs text-sub">{selected.primary_dx}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-sub">Stage</div>
+                    <div className="font-semibold text-sm mt-0.5">{selected.stage || "—"}</div>
+                    <div className="text-xs text-sub">{selected.line || ""}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-sub">Planned regimen</div>
+                    <div className="font-semibold text-sm mt-0.5">{(selected.nccn_match.regimen || "—").split(" ")[0]}</div>
+                    <div className="font-mono text-xs text-sub">
+                      {selected.jcodes.map(j => (
+                        <button key={j} onClick={() => go("coverage", { code: j })} className="text-accent hover:underline mr-1" title="View coverage policy">{j}</button>
+                      ))}
+                      · {selected.line || ""}
+                    </div>
+                  </div>
+                </div>
+                {biomarkers(selected).length > 0 && (
+                  <div className="flex items-center gap-2 mt-4 pt-3 border-t border-line flex-wrap">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-sub">Biomarkers</span>
+                    {biomarkers(selected).map((b, i) => (
+                      <span key={i} className="inline-flex items-center gap-1.5 bg-chip rounded-full px-2.5 py-1 text-xs font-semibold">
+                        <span className={`w-2 h-2 rounded-full ${b.dot}`}></span>{b.text}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </Card>
+
+              <Card>
+                <SectionHead chip={<LayerChip layer="L1" dark />} title="Deterministic rule check" right="Rules engine · pass/fail, not a prediction" />
+                <div className="p-5">
+                  {selected.rule_blockers.length > 0 ? (
+                    <React.Fragment>
+                      <div className="bg-badbg rounded-lg px-4 py-3 flex items-start gap-3 mb-3">
+                        <CheckIcon ok={false} />
+                        <div>
+                          <div className="font-bold text-badt">{selected.rule_blockers.length} rule check{selected.rule_blockers.length > 1 ? "s" : ""} failed — hard block</div>
+                          <div className="text-sm text-badt/80 mt-0.5">These are policy/coding rule failures, not predictions. Claim will deny until each is cleared.</div>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        {selected.rule_blockers.map(b => (
+                          <div key={b.exception_id} className="border border-line border-l-[3px] border-l-badt rounded-lg px-4 py-3 flex items-center gap-3">
+                            <span className="font-mono text-[10px] font-bold text-badt bg-badbg px-1.5 py-0.5 rounded shrink-0">RULE FAILED</span>
+                            <div className="text-sm flex-1">{b.message}</div>
+                            <button onClick={() => go("exceptions", { excId: b.exception_id })}
+                              className="font-mono text-xs bg-accentbg text-accent px-2 py-0.5 rounded hover:underline shrink-0">{b.exception_id} →</button>
+                          </div>
+                        ))}
+                      </div>
+                    </React.Fragment>
+                  ) : (
+                    <div className="bg-okbg rounded-lg px-4 py-3 flex items-center gap-3">
+                      <CheckIcon ok={true} />
+                      <div className="font-semibold text-okt">All rule checks pass — no hard blocks</div>
+                    </div>
+                  )}
+                </div>
+              </Card>
+
+              <Card>
+                <SectionHead chip={<LayerChip layer="L2" />} title="Model estimate" right="Heuristic stand-in · advisory, not a determination" />
+                <div className="p-5">
+                  <div className="flex items-center gap-3 mb-4">
+                    <Pill tone={riskTone(selected.risk_level)}>{selected.risk_level}</Pill>
+                    <span className="font-mono font-bold text-lg">{(selected.risk_score * 100).toFixed(0)}%</span>
+                    <span className="text-sm text-sub">estimated denial risk · predicted class <span className="font-mono">{selected.predicted_denial_class}</span></span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 mb-4">
+                    {Object.entries(selected.denial_probability).map(([k, v]) => (
+                      <div key={k} className="bg-page rounded-lg p-2.5 text-center">
+                        <div className="text-[10px] font-bold uppercase tracking-widest text-sub">{k}</div>
+                        <div className="font-mono font-bold mt-0.5">{(v * 100).toFixed(0)}%</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="space-y-1.5">
+                    {selected.shap_reasons.map((r, i) => (
+                      <div key={i} className="flex items-center justify-between text-sm gap-4">
+                        <span className="text-sub">{r.message}</span>
+                        <span className={`font-mono font-semibold shrink-0 ${String(r.impact).startsWith("+") ? "text-badt" : "text-okt"}`}>{r.impact}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-sub mt-3 font-mono">{selected.model_version}</p>
+                </div>
+              </Card>
+
+              <Card className="p-5">
+                <h3 className="font-bold mb-2">Recommended actions</h3>
+                <ul className="space-y-1.5">
+                  {selected.recommended_actions.map((a, i) => (
+                    <li key={i} className="text-sm text-sub flex gap-2"><span className="text-accent font-bold">→</span>{a}</li>
+                  ))}
+                </ul>
+              </Card>
+
+              <Card className="p-5">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div>
+                    <h3 className="font-bold">Payer denial received?</h3>
+                    <p className="text-xs text-sub mt-0.5">
+                      {selected.denied
+                        ? <span>Denial recorded (<span className="font-mono">CARC {selected.denial_carc}</span> on <span className="font-mono">{selected.denied_date}</span>) — the appeal package is in the Appeals tab.</span>
+                        : "Record the denial to auto-draft an appeal citing this claim's attached evidence (M-06 workflow)."}
+                    </p>
+                  </div>
+                  {!selected.denied && (
+                    <div className="flex items-end gap-2 flex-wrap">
+                      <div>
+                        <Label>Denial code</Label>
+                        <Select value={denyCarc} onChange={e => setDenyCarc(e.target.value)} className="w-56">
+                          {[["197", "Authorization absent"], ["15", "Benefits not assigned"], ["16", "Claim lacks information"],
+                            ["50", "Not covered under plan"], ["96", "Not medically necessary"], ["151", "Units not supported"],
+                            ["167", "Non-covered illness"], ["4", "Modifier inconsistent"], ["18", "Duplicate claim"],
+                            ["119", "Benefit maximum exceeded"], ["125", "Submission/billing error"]].map(([c, d]) =>
+                              <option key={c} value={c}>CARC {c} — {d}</option>)}
+                        </Select>
+                      </div>
+                      <div>
+                        <Label>RARC (optional)</Label>
+                        <TextInput value={denyRarc} onChange={e => setDenyRarc(e.target.value)} placeholder="e.g. N702" className="w-28 font-mono" />
+                      </div>
+                      <div>
+                        <Label>Paid amount</Label>
+                        <TextInput type="number" value={denyPaid} onChange={e => setDenyPaid(e.target.value)} className="w-28 font-mono" />
+                      </div>
+                      <Button variant="danger" onClick={async () => {
+                        try {
+                          await api(apiBase, `/v1/oncology/claims/${selected.claim_id}/deny`, {
+                            method: "POST",
+                            body: JSON.stringify({ carc: denyCarc, rarc: denyRarc || null, paid_amount: Number(denyPaid) || 0 }),
+                          });
+                          setDenyMsg(`Denial recorded — appeal drafted in the Appeals tab.`);
+                          await load();
+                        } catch (e) { setError(e.message); }
+                      }}>Record denial</Button>
+                    </div>
+                  )}
+                </div>
+                {denyMsg && !selected.denied && <p className="text-xs text-okt mt-2">{denyMsg}</p>}
+              </Card>
+            </React.Fragment>
+          ) : <Card className="p-5 text-sub text-sm">Select a claim to see its precheck detail.</Card>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Eligibility
+function EligibilityTab({ apiBase, go }) {
+  const [panel, setPanel] = useState(null);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [selCase, setSelCase] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    api(apiBase, "/v1/oncology/eligibility/summary").then(setPanel).catch(e => setError(e.message));
+  }, [apiBase]);
+
+  if (error) return <ErrorBanner msg={error} />;
+  if (!panel) return <Card className="p-5 text-sub text-sm">Loading eligibility results…</Card>;
+
+  const rows = panel.patients.filter(r => {
+    if (statusFilter && r.status !== statusFilter) return false;
+    if (!query) return true;
+    const q = query.toLowerCase();
+    return r.patient.toLowerCase().includes(q) || r.payer.toLowerCase().includes(q) || r.cancer.toLowerCase().includes(q);
+  });
+  const selPatient = panel.patients.find(p => p.case_id === selCase) || rows[0] || null;
+  const cardTone = { ok: "text-okt", warn: "text-warnt", bad: "text-badt" };
+  const dotTone = { ok: "bg-okt", warn: "bg-warnt", bad: "bg-badt" };
+  const statusPill = s => s === "Active" ? "ok" : s === "Needs review" ? "warn" : "bad";
+
+  function exportCsv() {
+    const head = "Patient,Age,Cancer,Payer,Network,Status,Effective,Termed,Benefit,Notes";
+    const body = panel.patients.map(r => [r.patient, r.age, r.cancer, `${r.payer} (${r.payer_kind})`, r.network, r.status, r.effective || "", r.termed || "", r.benefit, `"${r.notes}"`].join(","));
+    const blob = new Blob([[head, ...body].join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "eligibility_results.csv";
+    a.click();
+  }
+
+  function BenefitBar({ label, used, total }) {
+    const pct = total ? Math.min(100, Math.round(used / total * 100)) : 0;
+    return (
+      <div>
+        <div className="flex items-center justify-between text-xs mb-1">
+          <span className="text-sub">{label}</span>
+          <span className="font-mono">{money(used)} <span className="text-sub">of {money(total)}</span></span>
+        </div>
+        <div className="h-2 rounded-full bg-chip overflow-hidden">
+          <div className={`h-full rounded-full ${pct >= 100 ? "bg-okt" : "bg-accent"}`} style={{ width: pct + "%" }}></div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <div className="flex items-center gap-2 text-okt text-[11px] font-bold uppercase tracking-widest mb-1">
+            <CheckIcon ok={true} /> Verification complete
+          </div>
+          <h2 className="text-2xl font-bold">Eligibility results</h2>
+          <p className="text-sm text-sub mt-1">{panel.headline}</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="ghost" onClick={() => { setQuery(""); setStatusFilter(""); }}>↻ Re-run</Button>
+          <Button onClick={exportCsv}>↓ Export All (CSV)</Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+        {panel.cards.map(c => (
+          <Card key={c.label} className={`p-4 cursor-pointer ${statusFilter === c.label ? "border-accent" : ""}`}
+            >
+            <div onClick={() => ["Active", "Needs review", "Inactive"].includes(c.label) && setStatusFilter(statusFilter === c.label ? "" : c.label)}>
+              <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-sub">
+                <span className={`w-2 h-2 rounded-full ${dotTone[c.tone]}`}></span>{c.label}
+              </div>
+              <div className={`text-3xl font-bold font-mono mt-1 ${cardTone[c.tone]}`}>{c.value}</div>
+              <div className="text-xs text-sub mt-1">{c.sub}</div>
+              <div className="text-[11px] text-sub mt-0.5">{c.pct}{["Active", "Needs review", "Inactive"].includes(c.label) ? " · tap to filter" : ""}</div>
+            </div>
+          </Card>
+        ))}
+        <Card className="p-4">
+          <div className="text-[10px] font-bold uppercase tracking-widest text-sub">Billable readiness</div>
+          <div className="text-3xl font-bold font-mono mt-1 text-accent">{panel.readiness_pct}% <span className="text-xs text-sub font-sans font-normal">ready now</span></div>
+          <div className="h-2 rounded-full overflow-hidden flex mt-2 bg-chip">
+            <div className="bg-okt" style={{ width: panel.readiness_pct + "%" }}></div>
+            <div className="bg-badt" style={{ width: (100 - panel.readiness_pct) + "%" }}></div>
+          </div>
+          <div className="text-[11px] text-sub mt-1.5">{panel.need_action} patients need action before billing</div>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <Card className="lg:col-span-3">
+          <div className="px-5 py-3 border-b border-line flex items-center gap-3">
+            <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search patient, payer, or cancer type…"
+              className="flex-1 bg-page border border-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent" />
+            <span className="text-xs text-sub whitespace-nowrap">{rows.length} of {panel.patients.length} patients{statusFilter ? ` · ${statusFilter}` : ""}</span>
+          </div>
+          <div className="overflow-x-auto max-h-[520px] overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-card">
+                <tr className="text-left text-[11px] uppercase tracking-wider text-sub border-b border-line">
+                  <th className="px-5 py-2.5">Patient</th><th className="pr-3">Age</th>
+                  <th className="pr-3">Cancer</th><th className="pr-3">Payer</th><th className="pr-3">Network</th>
+                  <th className="pr-3">Status</th><th className="pr-3">Effective</th><th className="pr-3">Termed</th>
+                  <th className="pr-3">Benefit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.case_id} onClick={() => setSelCase(r.case_id)}
+                    className={`border-b border-line cursor-pointer ${selPatient && selPatient.case_id === r.case_id ? "bg-accentsel" : "hover:bg-hoverbg"}`}>
+                    <td className="px-5 py-2.5 font-semibold">{r.patient}</td>
+                    <td className="pr-3 text-sub">{r.age}</td>
+                    <td className="pr-3">{r.cancer}</td>
+                    <td className="pr-3">{r.payer}<div className="text-[11px] text-sub">{r.payer_kind}</div></td>
+                    <td className={`pr-3 ${r.network === "OON" ? "text-badt font-semibold" : "text-sub"}`}>{r.network}</td>
+                    <td className="pr-3"><span className="inline-flex items-center gap-1.5 whitespace-nowrap"><span className={`w-2 h-2 rounded-full ${dotTone[statusPill(r.status)]}`}></span>{r.status}</span></td>
+                    <td className="pr-3 font-mono text-xs text-sub whitespace-nowrap">{r.effective || "—"}</td>
+                    <td className={`pr-3 font-mono text-xs whitespace-nowrap ${r.termed ? "text-badt font-semibold" : "text-sub"}`}>{r.termed || "—"}</td>
+                    <td className="pr-3"><Pill tone={r.benefit === "Covered" ? "ok" : "gray"}>{r.benefit}</Pill></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        <div className="lg:col-span-2">
+          {selPatient ? (
+            <Card className="p-5">
+              <div className="flex items-center gap-2.5 mb-1">
+                <h3 className="font-bold text-lg">{selPatient.patient}</h3>
+                <Pill tone={statusPill(selPatient.status)}>{selPatient.status}</Pill>
+                <button onClick={() => go("previsit", { caseId: selPatient.case_id })}
+                  className="text-xs font-semibold text-accent hover:underline ml-auto">Pre-visit case →</button>
+              </div>
+              <p className="text-sm text-sub mb-1">{selPatient.age} · {selPatient.cancer} · {selPatient.payer} ({selPatient.payer_kind})</p>
+              <p className="text-xs text-sub mb-1">
+                Coverage effective <span className="font-mono">{selPatient.effective || "unknown"}</span>
+                {selPatient.termed
+                  ? <span> · <span className="text-badt font-semibold">termed <span className="font-mono">{selPatient.termed}</span></span></span>
+                  : <span> · no term date on file</span>}
+              </p>
+              <p className="text-xs text-sub mb-4">{selPatient.notes}</p>
+              {selPatient.benefits ? (
+                <div>
+                  <h4 className="text-[11px] uppercase tracking-wider text-sub font-semibold mb-3">Benefit accumulators <span className="normal-case font-normal">· from 271 response</span></h4>
+                  <div className="space-y-3">
+                    <BenefitBar label="Deductible" used={selPatient.benefits.deductible_used} total={selPatient.benefits.deductible_total} />
+                    <BenefitBar label="Out-of-pocket max" used={selPatient.benefits.oop_used} total={selPatient.benefits.oop_max} />
+                  </div>
+                  <div className="border-t border-line mt-4 pt-3">
+                    <h4 className="text-[11px] uppercase tracking-wider text-sub font-semibold mb-2">Member responsibility</h4>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div className="bg-page rounded-lg px-3 py-2">
+                        <div className="text-[10px] font-bold uppercase tracking-widest text-sub">Specialist copay</div>
+                        <div className="font-mono font-bold mt-0.5">{money(selPatient.benefits.specialist_copay)}</div>
+                      </div>
+                      <div className="bg-page rounded-lg px-3 py-2">
+                        <div className="text-[10px] font-bold uppercase tracking-widest text-sub">Coinsurance</div>
+                        <div className="font-mono font-bold mt-0.5">{selPatient.benefits.coinsurance_pct}%</div>
+                      </div>
+                    </div>
+                    {selPatient.benefits.member_est != null && (
+                      <div className="flex items-center justify-between mt-3 text-sm">
+                        <span className="text-sub">Estimated member responsibility (next visit)</span>
+                        <span className="font-mono font-bold">{money(selPatient.benefits.member_est)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-warnbg text-warnt rounded-lg px-4 py-3 text-sm">
+                  Benefit details unavailable — coverage could not be verified for this patient. Resolve the eligibility exception before estimating member responsibility.
+                </div>
+              )}
+            </Card>
+          ) : <Card className="p-5 text-sub text-sm">Select a patient to view benefit details.</Card>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Coverage Rules
+function CoverageTab({ apiBase, navReq, go }) {
+  const [policies, setPolicies] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    api(apiBase, "/v1/oncology/coverage/policies").then(d => { setPolicies(d); setSelected(d[0]); }).catch(e => setError(e.message));
+  }, [apiBase]);
+
+  useEffect(() => {
+    if (navReq && navReq.code && policies.length) {
+      const p = policies.find(x => x.covered_codes.some(c => c[0] === navReq.code));
+      if (p) setSelected(p);
+    }
+  }, [navReq && navReq.token, policies]);
+
+  const shown = policies.filter(p => {
+    if (!query) return true;
+    const q = query.toLowerCase();
+    return p.policy_id.toLowerCase().includes(q) || p.title.toLowerCase().includes(q) || p.source.toLowerCase().includes(q)
+      || p.covered_codes.some(c => c[0].toLowerCase().includes(q));
+  });
+
+  return (
+    <div>
+      <ErrorBanner msg={error} />
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <div className="lg:col-span-2">
+          <Card className="p-4">
+            <div className="flex items-baseline justify-between mb-1">
+              <h2 className="font-bold">Coverage rule library</h2>
+              <span className="font-mono text-xs text-sub">{policies.length} policies</span>
+            </div>
+            <p className="text-xs text-sub mb-3">LCD / NCD / payer policies cited by precheck</p>
+            <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter by code, drug, or payer…"
+              className="w-full bg-page border border-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent mb-3" />
+            <div className="divide-y divide-line -mx-4">
+              {shown.map(p => (
+                <div key={p.policy_id} onClick={() => setSelected(p)}
+                  className={`px-4 py-3 cursor-pointer border-l-[3px] ${selected && selected.policy_id === p.policy_id ? "border-l-accent bg-accentsel" : "border-l-transparent hover:bg-hoverbg"}`}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-sm font-semibold">{p.policy_id}</span>
+                    <Pill tone={p.kind === "LCD" ? "blue" : p.kind === "NCD" ? "gray" : "warn"}>{p.kind}</Pill>
+                  </div>
+                  <div className="text-sm mt-0.5">{p.title}</div>
+                  <div className="flex items-center justify-between mt-0.5">
+                    <span className="text-xs text-sub">{p.source.split("·")[0].trim()}</span>
+                    <span className="text-xs text-accent font-semibold">{p.active_claims} active</span>
+                  </div>
+                </div>
+              ))}
+              {shown.length === 0 && <p className="px-4 py-3 text-sub text-sm">No policies match this filter.</p>}
+            </div>
+          </Card>
+        </div>
+
+        <div className="lg:col-span-3 space-y-4">
+          {selected ? (
+            <React.Fragment>
+              <Card className="p-5">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="font-mono text-sm font-bold text-accent bg-accentbg px-2 py-0.5 rounded">{selected.policy_id}</span>
+                  <Pill tone="blue">{selected.kind}</Pill>
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-okt"><span className="w-2 h-2 rounded-full bg-okt"></span>{selected.status}</span>
+                </div>
+                <h2 className="text-2xl font-bold">{selected.title}</h2>
+                <p className="text-sm text-sub mt-1">{selected.source} · Updated {selected.updated}</p>
+                <div className="bg-page rounded-lg px-4 py-3 mt-4 text-sm text-sub leading-relaxed">{selected.summary}</div>
+              </Card>
+              <Card>
+                <SectionHead title="Medical necessity criteria" />
+                <div className="divide-y divide-line">
+                  {selected.criteria.map((c, i) => (
+                    <div key={i} className="px-5 py-3 flex items-center gap-3">
+                      <span className="w-6 h-6 rounded-full bg-accentbg text-accent text-xs font-bold flex items-center justify-center shrink-0">{i + 1}</span>
+                      <span className="text-sm">{c}</span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Card className="p-5">
+                  <h3 className="font-bold mb-3">Covered codes</h3>
+                  <div className="space-y-2">
+                    {selected.covered_codes.map(([code, name]) => (
+                      <div key={code} className="bg-page rounded-lg px-3 py-2 text-sm flex items-center gap-2">
+                        <span className="font-mono font-semibold">{code}</span>
+                        <span className="text-sub">· {name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+                <Card className="p-5">
+                  <h3 className="font-bold mb-3">Supporting ICD-10</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {selected.icd10.map(c => <MonoChip key={c}>{c}</MonoChip>)}
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-line text-sm text-sub flex items-center justify-between">
+                    <span>Active claims citing this policy</span>
+                    {selected.active_claims > 0
+                      ? <button onClick={() => go("denial", { codes: selected.covered_codes.map(c => c[0]) })}
+                          className="font-mono font-bold text-accent hover:underline">{selected.active_claims} →</button>
+                      : <span className="font-mono font-bold text-ink">0</span>}
+                  </div>
+                </Card>
+              </div>
+            </React.Fragment>
+          ) : <Card className="p-5 text-sub text-sm">Select a policy to view its criteria and codes.</Card>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Analytics
+function AnalyticsTab({ apiBase }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    api(apiBase, "/v1/oncology/analytics/summary").then(setData).catch(e => setError(e.message));
+  }, [apiBase]);
+
+  if (error) return <ErrorBanner msg={error} />;
+  if (!data) return <Card className="p-5 text-sub text-sm">Loading analytics…</Card>;
+
+  const maxTrend = Math.max(1, ...data.exception_trends.map(t => t.total));
+  const riskOrder = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+  const riskTotal = riskOrder.reduce((s, k) => s + (data.risk_distribution[k] || 0), 0) || 1;
+  const riskColor = { LOW: "bg-okt", MEDIUM: "bg-warnt", HIGH: "bg-badt", CRITICAL: "bg-badt" };
+
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <h2 className="text-2xl font-bold">Denial prevention analytics</h2>
+          <p className="text-sm text-sub mt-1">{data.service_line}</p>
+        </div>
+        <span className="inline-flex items-center gap-1.5 bg-okbg text-okt text-xs font-bold px-3 py-1.5 rounded-full">
+          <span className="w-2 h-2 rounded-full bg-okt"></span>LIVE
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+        {data.kpis.map(k => (
+          <Card key={k.label} className="p-4">
+            <div className="text-xs text-sub">{k.label}</div>
+            <div className="text-3xl font-bold font-mono mt-1">{k.value}</div>
+            <div className="text-xs text-sub mt-1.5">{k.note}</div>
+          </Card>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold">Exceptions by category</h3>
+            <MonoChip>live counts</MonoChip>
+          </div>
+          <div className="space-y-4">
+            {data.exception_trends.map(t => (
+              <div key={t.label}>
+                <div className="flex items-center justify-between text-sm mb-1.5">
+                  <span className="font-semibold">{t.label}</span>
+                  <span><span className="font-bold">{t.total}</span> <span className="text-sub">· {t.open} open</span></span>
+                </div>
+                <div className="h-2 rounded-full bg-chip overflow-hidden flex">
+                  <div className="h-full bg-badt" style={{ width: (t.open / maxTrend * 100) + "%" }}></div>
+                  <div className="h-full bg-accent" style={{ width: ((t.total - t.open) / maxTrend * 100) + "%" }}></div>
+                </div>
+              </div>
+            ))}
+            {data.exception_trends.length === 0 && <p className="text-sub text-sm">No exceptions recorded yet.</p>}
+          </div>
+          <div className="flex items-center gap-4 mt-4 pt-3 border-t border-line text-xs text-sub">
+            <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-badt"></span>Open</span>
+            <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-accent"></span>Resolved / in progress</span>
+          </div>
+        </Card>
+
+        <div className="space-y-4">
+          <Card className="p-5">
+            <h3 className="font-bold mb-3">Claim risk distribution</h3>
+            <div className="h-3 rounded-full bg-chip overflow-hidden flex mb-2">
+              {riskOrder.map(k => (
+                <div key={k} className={riskColor[k]} style={{ width: ((data.risk_distribution[k] || 0) / riskTotal * 100) + "%" }}></div>
+              ))}
+            </div>
+            <div className="flex items-center gap-4 text-xs text-sub flex-wrap">
+              {riskOrder.map(k => (
+                <span key={k} className="inline-flex items-center gap-1.5">
+                  <span className={`w-2.5 h-2.5 rounded-sm ${riskColor[k]}`}></span>{k} · {data.risk_distribution[k] || 0}
+                </span>
+              ))}
+            </div>
+          </Card>
+          <Card>
+            <div className="px-5 py-3.5 border-b border-line"><h3 className="font-bold">Payer insights</h3></div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase tracking-wider text-sub border-b border-line">
+                    <th className="px-5 py-2.5">Payer</th><th className="pr-3">Claims</th><th className="pr-3">Blockers</th>
+                    <th className="pr-3">Denied</th><th className="pr-3">Avg risk</th><th className="pr-3">Billed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.payer_insights.map(p => (
+                    <tr key={p.payer} className="border-b border-line">
+                      <td className="px-5 py-2.5 font-semibold">{p.payer}</td>
+                      <td className="pr-3 font-mono">{p.claims}</td>
+                      <td className={`pr-3 font-mono ${p.blockers > 0 ? "text-badt font-bold" : ""}`}>{p.blockers}</td>
+                      <td className="pr-3 font-mono">{p.denied}</td>
+                      <td className="pr-3 font-mono">{(p.avg_risk * 100).toFixed(0)}%</td>
+                      <td className="pr-3 font-mono">{money(p.billed)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+      </div>
+      <p className="text-xs text-sub mt-4">{data.caption}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Appeals
+function AppealsTab({ apiBase, go }) {
+  const [queue, setQueue] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    api(apiBase, "/v1/oncology/appeals/queue").then(d => { setQueue(d); setSelected(d.appeals[0] || null); }).catch(e => setError(e.message));
+  }, [apiBase]);
+
+  if (error) return <ErrorBanner msg={error} />;
+  if (!queue) return <Card className="p-5 text-sub text-sm">Loading appeals…</Card>;
+  if (queue.appeals.length === 0) return (
+    <Card className="p-8 text-center">
+      <h3 className="font-bold text-lg mb-1">No denied claims on record</h3>
+      <p className="text-sm text-sub">When a payer denies a claim, record the denial from its detail view in Denial Prevention — the appeal package will be drafted here automatically, citing any evidence attached to the claim's exceptions.</p>
+    </Card>
+  );
+
+  const winTone = w => w === "High" ? "ok" : w === "Medium" ? "warn" : "bad";
+  const statusPillTone = s => s === "Ready to file" ? "warn" : s === "Deadline near" ? "bad" : "gray";
+
+  function copyLetter() {
+    navigator.clipboard.writeText(selected.letter).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  return (
+    <div>
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <div className="lg:col-span-2">
+          <Card className="p-4">
+            <div className="flex items-baseline justify-between mb-1">
+              <h2 className="font-bold">Denied claims</h2>
+              <span className="font-mono text-xs text-sub">{queue.open_count} open</span>
+            </div>
+            <p className="text-xs text-sub mb-3">AI-drafted appeals · sorted by deadline</p>
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              <div className="bg-page rounded-lg px-4 py-3">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-sub">At risk</div>
+                <div className="font-mono font-bold text-lg">{money(queue.at_risk)}</div>
+              </div>
+              <div className="bg-page rounded-lg px-4 py-3">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-sub">Avg overturn (est.)</div>
+                <div className="font-mono font-bold text-lg text-okt">{queue.avg_overturn_pct}%</div>
+              </div>
+            </div>
+            <div className="divide-y divide-line -mx-4">
+              {queue.appeals.map(a => (
+                <div key={a.appeal_id} onClick={() => setSelected(a)}
+                  className={`px-4 py-3 cursor-pointer border-l-[3px] ${selected && selected.appeal_id === a.appeal_id ? "border-l-accent bg-accentsel" : "border-l-transparent hover:bg-hoverbg"}`}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold">{a.patient}</span>
+                    <span className="font-mono text-sm font-semibold">{money(a.amount)}</span>
+                  </div>
+                  <div className="text-xs text-sub mt-0.5">{a.plan}</div>
+                  <div className="text-xs text-sub mt-0.5 font-mono">paid {money(a.paid_amount || 0)} · at risk {money(a.at_risk)}</div>
+                  <div className="flex items-center justify-between mt-1 gap-2">
+                    <span className="font-mono text-[10px] font-bold text-badt bg-badbg px-1.5 py-0.5 rounded shrink-0">CARC {a.carc}{a.rarc ? `/${a.rarc}` : ""}</span>
+                    <span className={`text-xs font-semibold shrink-0 ${a.days_left <= 7 ? "text-badt" : "text-sub"}`}>{a.days_left}d left</span>
+                  </div>
+                  {a.denial_reason && <div className="text-[11px] text-sub mt-0.5 leading-snug">{a.denial_reason}</div>}
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+
+        <div className="lg:col-span-3 space-y-4">
+          {selected && (
+            <React.Fragment>
+              <Card className="p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <h2 className="text-2xl font-bold">{selected.patient}</h2>
+                      <Pill tone={statusPillTone(selected.status)}>{selected.status}</Pill>
+                      {selected.claim_id && (
+                        <button onClick={() => go("denial", { claimId: selected.claim_id })}
+                          className="text-xs font-semibold text-accent hover:underline">Open claim →</button>
+                      )}
+                    </div>
+                    <p className="text-sm text-sub mt-1">{selected.regimen} · DOS {selected.dos} · {selected.plan}</p>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-bold font-mono">{money(selected.at_risk)}</div>
+                    <div className="text-xs text-sub">at risk · billed {money(selected.amount)} · paid {money(selected.paid_amount || 0)}</div>
+                    <div className="text-xs text-sub">Denied {selected.denied}</div>
+                  </div>
+                </div>
+                <div className="bg-badbg rounded-lg px-4 py-3 mt-4 flex items-start gap-3">
+                  <span className="inline-flex items-center justify-center w-6 h-6 rounded bg-badt text-white font-bold text-sm shrink-0">!</span>
+                  <div>
+                    <div className="font-bold text-badt text-sm">{selected.carc_line}</div>
+                    <div className="text-sm text-badt/80 mt-0.5">{selected.carc_detail}</div>
+                  </div>
+                </div>
+              </Card>
+
+              <Card>
+                <div className="px-5 py-3.5 border-b border-line flex items-center gap-2.5">
+                  <span className="w-2 h-2 rounded-full bg-accent"></span>
+                  <h3 className="font-bold">Appeal assessment</h3>
+                  <span className="text-xs text-sub ml-auto">Win likelihood</span>
+                  <Pill tone={winTone(selected.win_likelihood)}>{selected.win_likelihood}</Pill>
+                </div>
+                <div className="p-5 text-sm text-sub leading-relaxed">{selected.assessment}</div>
+              </Card>
+
+              <Card>
+                <div className="px-5 py-3.5 border-b border-line flex items-center justify-between">
+                  <h3 className="font-bold">Drafted appeal letter</h3>
+                  <Button variant="ghost" onClick={copyLetter}>{copied ? "Copied ✓" : "Copy"}</Button>
+                </div>
+                <div className="p-6">
+                  <pre className="whitespace-pre-wrap text-sm leading-relaxed font-sans">{selected.letter}</pre>
+                </div>
+                {selected.cited_evidence && selected.cited_evidence.length > 0 && (
+                  <div className="px-5 py-3.5 border-t border-line">
+                    <h4 className="text-[11px] uppercase tracking-wider text-sub font-semibold mb-1.5">Cited evidence ({selected.cited_evidence.length})</h4>
+                    <ul className="text-xs text-sub space-y-1">{selected.cited_evidence.map((e, i) => <li key={i} className="font-mono">{e}</li>)}</ul>
+                  </div>
+                )}
+              </Card>
+            </React.Fragment>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Exceptions
+const CATEGORY_ORDER = ["ELIGIBILITY", "AUTH", "REFERRAL", "COB", "CPT", "DX", "MODIFIER", "CODING", "UNITS", "CDX"];
+const CATEGORY_LABELS = {
+  ELIGIBILITY: "Eligibility", AUTH: "Prior Authorization", REFERRAL: "Referral",
+  COB: "Coordination of Benefits", CPT: "CPT", DX: "DX", MODIFIER: "Modifier",
+  CODING: "Coding", UNITS: "Units", CDX: "Diagnostics / CDx",
+};
+
+function ExceptionsTab({ apiBase, refreshKey, navReq, go }) {
+  const [items, setItems] = useState([]);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [ownerFilter, setOwnerFilter] = useState("");
+  const [catFilter, setCatFilter] = useState("");
+  const [audit, setAudit] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
+  const [error, setError] = useState(null);
+  const [edit, setEdit] = useState({ owner: "", due_date: "", status: "", resolution_notes: "" });
+  const [evForm, setEvForm] = useState({ payer_source: "", verification_method: "PORTAL", reference_number: "", verified_by: "" });
+
+  const load = useCallback(async () => {
+    try {
+      const params = new URLSearchParams();
+      if (statusFilter) params.set("status", statusFilter);
+      if (ownerFilter) params.set("owner", ownerFilter);
+      const data = await api(apiBase, "/v1/oncology/exceptions" + (params.toString() ? "?" + params.toString() : ""));
+      setItems(data);
+      setError(null);
+    } catch (e) { setError(e.message); }
+  }, [apiBase, statusFilter, ownerFilter]);
+  useEffect(() => { load(); }, [load, refreshKey]);
+
+  const selected = items.find(i => i.exception_id === selectedId);
+  function openDetail(item) {
+    setSelectedId(item.exception_id);
+    setEdit({ owner: item.owner, due_date: item.due_date || "", status: item.status, resolution_notes: item.resolution_notes || "" });
+  }
+
+  useEffect(() => {
+    if (navReq && navReq.excId && items.length) {
+      const item = items.find(i => i.exception_id === navReq.excId);
+      if (item) { setCatFilter(""); openDetail(item); }
+    }
+  }, [navReq && navReq.token, items]);
+
+  useEffect(() => {
+    api(apiBase, "/v1/oncology/audit?limit=12").then(setAudit).catch(() => {});
+  }, [apiBase, refreshKey, items]);
+
+  function openOrigin(caseId, e) {
+    e.stopPropagation();
+    if (caseId.startsWith("CLM")) go("denial", { claimId: caseId });
+    else go("previsit", { caseId });
+  }
+  async function saveEdit() {
+    try {
+      const payload = { resolution_notes: edit.resolution_notes };
+      if (edit.owner) payload.owner = edit.owner;
+      if (edit.due_date) payload.due_date = edit.due_date;
+      if (edit.status) payload.status = edit.status;
+      const updated = await api(apiBase, `/v1/oncology/exceptions/${selectedId}`, { method: "PATCH", body: JSON.stringify(payload) });
+      setItems(items.map(i => i.exception_id === updated.exception_id ? updated : i));
+    } catch (e) { setError(e.message); }
+  }
+  async function submitEvidence(e) {
+    e.preventDefault();
+    try {
+      await api(apiBase, `/v1/oncology/exceptions/${selectedId}/evidence`, { method: "POST", body: JSON.stringify(evForm) });
+      await load();
+      setEvForm({ payer_source: "", verification_method: "PORTAL", reference_number: "", verified_by: "" });
+    } catch (e) { setError(e.message); }
+  }
+
+  const open = items.filter(i => i.status === "OPEN").length;
+  const prog = items.filter(i => i.status === "IN_PROGRESS").length;
+  const done = items.filter(i => i.status === "RESOLVED" || i.status === "WAIVED").length;
+
+  const catCounts = {};
+  items.forEach(i => { catCounts[i.category] = (catCounts[i.category] || 0) + 1; });
+  const presentCats = CATEGORY_ORDER.filter(c => catCounts[c]);
+  const visible = catFilter ? items.filter(i => i.category === catFilter) : items;
+  const grouped = presentCats
+    .filter(c => !catFilter || c === catFilter)
+    .map(c => ({ cat: c, list: visible.filter(i => i.category === c) }))
+    .filter(g => g.list.length > 0);
+
+  return (
+    <div>
+      <ErrorBanner msg={error} />
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <div className="lg:col-span-3">
+          <Card className="p-4">
+            <div className="flex items-baseline justify-between mb-1">
+              <h2 className="font-bold">Exception queue</h2>
+              <span className="font-mono text-xs text-sub">{items.length} exceptions</span>
+            </div>
+            <p className="text-xs text-sub mb-3">Every flagged issue with an owner, deadline, and evidence trail</p>
+            <div className="grid grid-cols-4 gap-2 mb-4">
+              <SummaryTile n={open} label="Open" tone="bad" />
+              <SummaryTile n={items.filter(i => i.escalated).length} label="Escalated" tone="bad" />
+              <SummaryTile n={prog} label="In progress" tone="warn" />
+              <SummaryTile n={done} label="Resolved" tone="ok" />
+            </div>
+            <div className="flex gap-2 mb-3">
+              <div className="w-44">
+                <Select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+                  <option value="">All statuses</option><option value="OPEN">OPEN</option><option value="IN_PROGRESS">IN_PROGRESS</option>
+                  <option value="RESOLVED">RESOLVED</option><option value="WAIVED">WAIVED</option>
+                </Select>
+              </div>
+              <div className="w-44"><TextInput placeholder="Filter by owner" value={ownerFilter} onChange={e => setOwnerFilter(e.target.value)} /></div>
+              <Button variant="ghost" onClick={load}>Refresh</Button>
+            </div>
+            <div className="flex gap-1.5 mb-3 flex-wrap">
+              <button onClick={() => setCatFilter("")}
+                className={`px-2.5 py-1 rounded-full text-xs font-semibold ${!catFilter ? "bg-accent text-white" : "bg-chip text-sub"}`}>
+                All · {items.length}
+              </button>
+              {presentCats.map(c => (
+                <button key={c} onClick={() => setCatFilter(catFilter === c ? "" : c)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-semibold ${catFilter === c ? "bg-accent text-white" : "bg-chip text-sub"}`}>
+                  {CATEGORY_LABELS[c]} · {catCounts[c]}
+                </button>
+              ))}
+            </div>
+            <div className="-mx-4">
+              {grouped.map(g => (
+                <div key={g.cat}>
+                  <div className="px-4 py-2 bg-page border-y border-line flex items-center justify-between sticky top-0">
+                    <span className="text-[11px] font-bold uppercase tracking-widest text-sub">{CATEGORY_LABELS[g.cat]}</span>
+                    <span className="font-mono text-xs text-sub">{g.list.length}</span>
+                  </div>
+                  <div className="divide-y divide-line">
+                    {g.list.map(i => (
+                      <div key={i.exception_id} onClick={() => openDetail(i)}
+                        className={`px-4 py-3 cursor-pointer border-l-[3px] ${selectedId === i.exception_id ? "border-l-accent bg-accentsel" : "border-l-transparent hover:bg-hoverbg"}`}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs font-semibold">{i.exception_id}</span>
+                            <LayerChip layer={i.source_layer} />
+                            {i.blocks_service && <Pill tone="bad">Blocks service</Pill>}
+                            {i.escalated && <Pill tone="bad">ESCALATED &gt;24h</Pill>}
+                          </div>
+                          <Pill tone={statusTone(i.status)}>{i.status.replaceAll("_", " ")}</Pill>
+                        </div>
+                        <div className="text-sm mt-1">{i.description}</div>
+                        <div className="text-xs text-sub mt-0.5">
+                          <button onClick={e => openOrigin(i.case_id, e)} className="font-mono text-accent hover:underline">{i.case_id} →</button>
+                          {" "}· Owner {i.owner} · Due <span className="font-mono">{i.due_date || "—"}</span>
+                          {i.evidence.length > 0 && <span> · {i.evidence.length} evidence</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {grouped.length === 0 && <p className="px-4 py-3 text-sub text-sm">No exceptions match this filter.</p>}
+            </div>
+          </Card>
+        </div>
+
+        <div className="lg:col-span-2">
+          {selected ? (
+            <Card className="p-5">
+              <div className="flex items-center gap-2 mb-1">
+                <h3 className="font-bold font-mono">{selected.exception_id}</h3>
+                <Pill tone={statusTone(selected.status)}>{selected.status.replaceAll("_", " ")}</Pill>
+              </div>
+              <p className="text-xs text-sub mb-2"><LayerChip layer={selected.source_layer} /> · {selected.category} · blocks service: {selected.blocks_service ? "yes" : "no"}</p>
+              <p className="text-sm mb-4">{selected.description}</p>
+              <div className="space-y-2.5 mb-4">
+                <div><Label>Owner</Label><TextInput value={edit.owner} onChange={e => setEdit({ ...edit, owner: e.target.value })} /></div>
+                <div><Label>Due date</Label><TextInput type="date" value={edit.due_date} onChange={e => setEdit({ ...edit, due_date: e.target.value })} /></div>
+                <div><Label>Status</Label>
+                  <Select value={edit.status} onChange={e => setEdit({ ...edit, status: e.target.value })}>
+                    <option value="OPEN">OPEN</option><option value="IN_PROGRESS">IN_PROGRESS</option>
+                    <option value="RESOLVED">RESOLVED</option><option value="WAIVED">WAIVED</option>
+                  </Select></div>
+                <div><Label>Resolution notes</Label>
+                  <textarea rows="2" className="w-full bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:border-accent"
+                    value={edit.resolution_notes} onChange={e => setEdit({ ...edit, resolution_notes: e.target.value })} /></div>
+                <Button onClick={saveEdit}>Save changes</Button>
+              </div>
+              <div className="border-t border-line pt-4">
+                <h4 className="text-[11px] uppercase tracking-wider text-sub font-semibold mb-2">Payer evidence</h4>
+                {selected.evidence.length === 0 && <p className="text-xs text-sub mb-2">No evidence attached yet.</p>}
+                <div className="space-y-1.5 mb-3">
+                  {selected.evidence.map(ev => (
+                    <div key={ev.evidence_id} className="bg-page rounded-lg px-3 py-2 text-xs">
+                      <div className="font-semibold">{ev.payer_source} <span className="text-sub font-normal">· {ev.verification_method}</span></div>
+                      <div className="text-sub font-mono mt-0.5">ref {ev.reference_number || "—"} · {String(ev.verified_at).slice(0, 16).replace("T", " ")} · {ev.verified_by}</div>
+                    </div>
+                  ))}
+                </div>
+                <form onSubmit={submitEvidence} className="space-y-2">
+                  <TextInput required placeholder="Payer source (portal, phone, EDI txn)" value={evForm.payer_source} onChange={e => setEvForm({ ...evForm, payer_source: e.target.value })} />
+                  <Select value={evForm.verification_method} onChange={e => setEvForm({ ...evForm, verification_method: e.target.value })}>
+                    <option value="PORTAL">PORTAL</option><option value="PHONE">PHONE</option><option value="EDI">EDI</option><option value="FAX">FAX</option>
+                  </Select>
+                  <TextInput placeholder="Reference number" value={evForm.reference_number} onChange={e => setEvForm({ ...evForm, reference_number: e.target.value })} />
+                  <TextInput required placeholder="Verified by" value={evForm.verified_by} onChange={e => setEvForm({ ...evForm, verified_by: e.target.value })} />
+                  <Button type="submit" variant="ghost">Attach evidence</Button>
+                </form>
+              </div>
+            </Card>
+          ) : <Card className="p-5 text-sub text-sm">Select an exception to assign an owner, update status, or attach payer evidence.</Card>}
+        </div>
+      </div>
+
+      <Card className="mt-5">
+        <div className="px-5 py-3.5 border-b border-line flex items-center justify-between">
+          <h3 className="font-bold">Audit trail</h3>
+          <span className="text-xs text-sub">Append-only · 7-year retention per PRD v1.1 · last {audit.length} events</span>
+        </div>
+        <div className="divide-y divide-line max-h-64 overflow-y-auto">
+          {audit.map(a => (
+            <div key={a.id} className="px-5 py-2 flex items-center gap-3 text-xs">
+              <span className="font-mono text-sub whitespace-nowrap">{String(a.ts).slice(0, 19).replace("T", " ")}</span>
+              <Pill tone="blue">{a.actor}</Pill>
+              <span className="font-semibold whitespace-nowrap">{a.action}</span>
+              <span className="font-mono text-sub">{a.entity_id}</span>
+              <span className="text-sub truncate">{a.detail}</span>
+            </div>
+          ))}
+          {audit.length === 0 && <p className="px-5 py-3 text-sub text-sm">No audit events yet.</p>}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- EDI Intake
+function EdiTab({ apiBase, onDataChanged }) {
+  const [raw, setRaw] = useState("");
+  const [samples, setSamples] = useState(null);
+  const [result, setResult] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [error, setError] = useState(null);
+
+  const loadHistory = useCallback(() => {
+    api(apiBase, "/v1/oncology/edi/files").then(setHistory).catch(() => {});
+  }, [apiBase]);
+  useEffect(() => {
+    api(apiBase, "/v1/oncology/edi/samples").then(setSamples).catch(e => setError(e.message));
+    loadHistory();
+  }, [apiBase, loadHistory]);
+
+  async function ingest() {
+    try {
+      const r = await api(apiBase, "/v1/oncology/edi/ingest", { method: "POST", body: JSON.stringify({ raw }) });
+      setResult(r);
+      setError(null);
+      loadHistory();
+      onDataChanged();
+    } catch (e) { setError(e.message); setResult(null); }
+  }
+
+  const [decoded, setDecoded] = useState(null);
+  const [showRaw, setShowRaw] = useState(false);
+  async function decode() {
+    try {
+      setDecoded(await api(apiBase, "/v1/oncology/edi/decode", { method: "POST", body: JSON.stringify({ raw }) }));
+      setError(null);
+    } catch (e) { setError(e.message); setDecoded(null); }
+  }
+
+  // Turn a stored/returned result object into a readable sentence
+  function readable(r) {
+    if (!r) return "";
+    if (r.summary) return r.summary;
+    if (r.claim_id) return `Claim ${r.claim_id} · $${Number(r.billed_amount || 0).toLocaleString()} · ${r.risk_level} risk · ${r.rule_blockers} rule check(s) failed`;
+    if (r.actions) return `${r.claims_processed} claim(s) adjudicated: ` + r.actions.map(a =>
+      a.action === "denial_recorded" ? `${a.claim_id} denied (CARC ${a.carc})`
+        : a.action === "paid_clean" ? `${a.claim_id} paid clean` : `${a.claim_id} unmatched`).join("; ");
+    return JSON.stringify(r);
+  }
+
+  const [batchResult, setBatchResult] = useState(null);
+  async function onFilesPicked(e) {
+    const files = [...e.target.files];
+    if (!files.length) return;
+    try {
+      const payload = await Promise.all(files.map(f => f.text().then(text => ({ name: f.name, raw: text }))));
+      const r = await api(apiBase, "/v1/oncology/edi/ingest-batch", { method: "POST", body: JSON.stringify({ files: payload }) });
+      setBatchResult(r);
+      setError(null);
+      loadHistory();
+      onDataChanged();
+    } catch (e2) { setError(e2.message); setBatchResult(null); }
+    e.target.value = "";
+  }
+
+  return (
+    <div>
+      <div className="mb-4">
+        <h2 className="text-2xl font-bold">EDI intake</h2>
+        <p className="text-sm text-sub mt-1">837P professional claims and 835 remittances — the data pipeline that will feed model training (PRD Section 4). Simplified X12 reader; production uses pyx12 with full 005010 guides.</p>
+      </div>
+      <ErrorBanner msg={error} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            <h3 className="font-bold flex-1">Paste X12 transaction</h3>
+            {samples && <Button variant="ghost" onClick={() => setRaw(samples.sample_837)}>Load sample 837</Button>}
+            {samples && <Button variant="ghost" onClick={() => setRaw(samples.sample_835)}>Load sample 835</Button>}
+          </div>
+          <textarea rows="9" value={raw} onChange={e => setRaw(e.target.value)}
+            placeholder="ISA*00*~ST*837*0001~CLM*..."
+            className="w-full bg-page border border-line rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:border-accent" />
+          <div className="mt-3 flex gap-2">
+            <Button variant="ghost" onClick={decode} disabled={!raw.trim()}>Decode &amp; preview</Button>
+            <Button onClick={ingest} disabled={!raw.trim()}>Ingest transaction</Button>
+          </div>
+          {result && (
+            <div className="mt-4 bg-okbg rounded-lg px-4 py-3">
+              <div className="font-bold text-okt text-sm mb-1">Ingested · {result.kind === "837P" ? "837P professional claim" : "835 remittance advice"}</div>
+              <p className="text-sm text-okt/90">{readable(result.result)}</p>
+              <p className="text-xs text-okt/80 mt-1.5">
+                {result.kind === "837P" ? "The claim ran through the L1 rules engine — open Denial Prevention to review it." : "Denials recorded — see Appeals for the drafted package."}
+              </p>
+            </div>
+          )}
+
+          <div className="mt-4 pt-4 border-t border-line">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-bold text-sm">Batch file upload</h4>
+              <span className="text-xs text-sub">.edi / .x12 / .txt · up to 50 files</span>
+            </div>
+            <label className="block border-2 border-dashed border-line rounded-lg px-4 py-6 text-center text-sm text-sub cursor-pointer hover:border-accent hover:text-accent transition">
+              Click to choose files (or drop them on the picker)
+              <input type="file" multiple accept=".edi,.x12,.txt,.837,.835,.dat" onChange={onFilesPicked} className="hidden" />
+            </label>
+            {batchResult && (
+              <div className="mt-3 space-y-1.5">
+                <div className="text-sm font-semibold">{batchResult.succeeded} of {batchResult.total} files ingested{batchResult.failed > 0 && <span className="text-badt"> · {batchResult.failed} failed</span>}</div>
+                {batchResult.results.map((r, i) => (
+                  <div key={i} className={`rounded-lg px-3 py-2 text-xs ${r.ok ? "bg-okbg text-okt" : "bg-badbg text-badt"}`}>
+                    <span className="font-mono font-semibold">{r.name}</span>
+                    {r.ok ? <span> · {r.kind === "837P" ? "837P claim" : "835 remittance"}<div className="mt-0.5">{readable(r.result)}</div></span>
+                          : <span> · {r.error}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Card>
+        <div className="space-y-4">
+          {decoded && (
+            <Card>
+              <div className="px-5 py-3.5 border-b border-line flex items-center justify-between">
+                <h3 className="font-bold">Decoded {decoded.kind === "837P" ? "837P claim" : decoded.kind === "835" ? "835 remittance" : decoded.kind}</h3>
+                <button onClick={() => setShowRaw(s => !s)} className="text-xs text-accent hover:underline">{showRaw ? "Hide raw segments" : "Show raw segments"}</button>
+              </div>
+              <div className="p-5">
+                <h4 className="text-[11px] uppercase tracking-wider text-sub font-semibold mb-2">In plain English</h4>
+                <ul className="space-y-1 mb-4">
+                  {decoded.summary.map((s, i) => (
+                    <li key={i} className="text-sm flex gap-2"><span className="text-accent font-bold">·</span>{s}</li>
+                  ))}
+                </ul>
+                <h4 className="text-[11px] uppercase tracking-wider text-sub font-semibold mb-2">Segment breakdown</h4>
+                <div className="divide-y divide-line border border-line rounded-lg overflow-hidden">
+                  {decoded.segments.map((s, i) => (
+                    <div key={i} className="px-3 py-2">
+                      <div className="flex items-baseline gap-2">
+                        <span className="font-mono text-[10px] font-bold bg-chip text-sub px-1.5 py-0.5 rounded shrink-0">{s.tag}</span>
+                        <span className="text-sm font-semibold">{s.name}</span>
+                      </div>
+                      {s.detail && <div className="text-sm text-ink mt-0.5">{s.detail}</div>}
+                      <div className="text-xs text-sub mt-0.5">{s.description}</div>
+                      {showRaw && <div className="font-mono text-[11px] text-sub mt-1 break-all bg-page rounded px-2 py-1">{s.raw}</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Card>
+          )}
+          <Card>
+            <div className="px-5 py-3.5 border-b border-line flex items-center justify-between">
+              <h3 className="font-bold">Ingest history</h3>
+              <span className="text-xs text-sub">{history.length} transactions</span>
+            </div>
+            <div className="divide-y divide-line max-h-[420px] overflow-y-auto">
+              {history.map(h => (
+                <div key={h.id} className="px-5 py-3 text-sm">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Pill tone={h.kind === "837P" ? "blue" : "warn"}>{h.kind === "837P" ? "837P claim" : "835 remittance"}</Pill>
+                    <span className="text-xs text-sub">{String(h.ingested_at).slice(0, 16).replace("T", " ")}</span>
+                  </div>
+                  <div className="text-sm">{readable(h.result)}</div>
+                </div>
+              ))}
+              {history.length === 0 && <p className="px-5 py-3 text-sub text-sm">Nothing ingested yet — try the sample 837, then the sample 835 that denies it.</p>}
+            </div>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Validation
+function ValidationTab({ apiBase }) {
+  const [report, setReport] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function run() {
+    setRunning(true);
+    try {
+      setReport(await api(apiBase, "/v1/oncology/validation/run", { method: "POST" }));
+      setError(null);
+    } catch (e) { setError(e.message); }
+    setRunning(false);
+  }
+
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <h2 className="text-2xl font-bold">Rules-engine validation</h2>
+          <p className="text-sm text-sub mt-1">L1 engine vs expert manual review on a gold-standard scenario set — precision, recall, missed blockers, and false flags (PRD validation milestone).</p>
+        </div>
+        <Button onClick={run} disabled={running}>{running ? "Running…" : report ? "Re-run validation" : "Run validation"}</Button>
+      </div>
+      <ErrorBanner msg={error} />
+
+      <Card className="p-5 mb-5">
+        <h3 className="font-bold mb-2">Why we validate</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3 text-sm text-sub">
+          <div><span className="font-semibold text-ink">Proof, not claims.</span> The product tells billing staff a claim will deny. This measures how often that judgement matches an expert's — the answer to "how accurate is it?" from partners and investors.</div>
+          <div><span className="font-semibold text-ink">Trust before automation.</span> Staff won't let software block a claim until they know its false-flag rate. Precision tells them how often it cries wolf; recall tells them what it lets through.</div>
+          <div><span className="font-semibold text-ink">Regression safety.</span> Every rule change re-runs the whole scenario set, so a new rule that quietly breaks an existing check is caught immediately rather than in production.</div>
+          <div><span className="font-semibold text-ink">It maps the roadmap.</span> The misses are the point: blockers rules can't catch (e.g. insufficient documentation) are exactly what the ML layer in the PRD is for — quantified, not asserted.</div>
+        </div>
+        <p className="text-xs text-sub mt-3 pt-3 border-t border-line">
+          <span className="font-semibold">How to read it:</span> <b>Precision</b> = of everything flagged, how much was truly a blocker. <b>Recall</b> = of every true blocker, how much was caught. <b>F1</b> balances the two. Expert labels are the gold standard; the engine is scored against them.
+        </p>
+      </Card>
+
+      {report ? (
+        <React.Fragment>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+            <Card className="p-4"><div className="text-xs text-sub">Scenarios</div><div className="text-3xl font-bold font-mono mt-1">{report.scenarios}</div><div className="text-xs text-sub mt-1.5">{report.exact_match} exact matches</div></Card>
+            <Card className="p-4"><div className="text-xs text-sub">Precision</div><div className="text-3xl font-bold font-mono mt-1 text-okt">{(report.precision * 100).toFixed(1)}%</div><div className="text-xs text-sub mt-1.5">{report.false_positives} false flag(s)</div></Card>
+            <Card className="p-4"><div className="text-xs text-sub">Recall</div><div className="text-3xl font-bold font-mono mt-1 text-accent">{(report.recall * 100).toFixed(1)}%</div><div className="text-xs text-sub mt-1.5">{report.false_negatives} missed blocker(s)</div></Card>
+            <Card className="p-4"><div className="text-xs text-sub">F1</div><div className="text-3xl font-bold font-mono mt-1">{(report.f1 * 100).toFixed(1)}%</div><div className="text-xs text-sub mt-1.5">harmonic mean</div></Card>
+            <Card className="p-4"><div className="text-xs text-sub">True positives</div><div className="text-3xl font-bold font-mono mt-1">{report.true_positives}</div><div className="text-xs text-sub mt-1.5">blockers correctly caught</div></Card>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <Card>
+              <div className="px-5 py-3.5 border-b border-line"><h3 className="font-bold text-badt">Missed blockers (false negatives)</h3></div>
+              <div className="divide-y divide-line">
+                {report.missed_blockers.map((m, i) => (
+                  <div key={i} className="px-5 py-3 text-sm">
+                    <span className="font-mono text-xs bg-badbg text-badt px-1.5 py-0.5 rounded mr-2">{m.scenario}</span>
+                    <span className="font-mono text-xs">{m.rule}</span>
+                    <div className="text-xs text-sub mt-1">{m.description}</div>
+                  </div>
+                ))}
+                {report.missed_blockers.length === 0 && <p className="px-5 py-3 text-sub text-sm">None — the engine caught every expert-flagged blocker.</p>}
+              </div>
+            </Card>
+            <Card>
+              <div className="px-5 py-3.5 border-b border-line"><h3 className="font-bold text-warnt">False flags (false positives)</h3></div>
+              <div className="divide-y divide-line">
+                {report.false_flags.map((m, i) => (
+                  <div key={i} className="px-5 py-3 text-sm">
+                    <span className="font-mono text-xs bg-warnbg text-warnt px-1.5 py-0.5 rounded mr-2">{m.scenario}</span>
+                    <span className="font-mono text-xs">{m.rule}</span>
+                    <div className="text-xs text-sub mt-1">{m.description}</div>
+                  </div>
+                ))}
+                {report.false_flags.length === 0 && <p className="px-5 py-3 text-sub text-sm">None — no rule fired where the expert saw no issue.</p>}
+              </div>
+            </Card>
+          </div>
+          <Card>
+            <div className="px-5 py-3.5 border-b border-line"><h3 className="font-bold">Scenario detail</h3></div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase tracking-wider text-sub border-b border-line">
+                    <th className="px-5 py-2.5">Scenario</th><th className="pr-3">Description</th>
+                    <th className="pr-3">Expert flagged</th><th className="pr-3">Engine flagged</th><th className="pr-3">Match</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.details.map(d => (
+                    <tr key={d.scenario_id} className="border-b border-line align-top">
+                      <td className="px-5 py-2.5 font-mono text-xs font-semibold">{d.scenario_id}</td>
+                      <td className="pr-3 text-xs text-sub max-w-[220px]">{d.description}</td>
+                      <td className="pr-3 font-mono text-xs">{d.expert.join(", ") || "—"}</td>
+                      <td className="pr-3 font-mono text-xs">{d.engine.join(", ") || "—"}</td>
+                      <td className="pr-3">{d.match ? <Pill tone="ok">Match</Pill> : <Pill tone="bad">Diff</Pill>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+          <p className="text-xs text-sub mt-3">{report.note}</p>
+        </React.Fragment>
+      ) : (
+        <Card className="p-8 text-center">
+          <h3 className="font-bold text-lg mb-1">No validation run yet</h3>
+          <p className="text-sm text-sub">Run the gold-standard scenario set to measure the rules engine against expert review — the numbers design partners and investors will ask for.</p>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Connections
+function ConnectTab({ apiBase, go }) {
+  const [cfg, setCfg] = useState(null);
+  const [form, setForm] = useState({ partner_id: "mock", mode: "mock", base_url: "", api_key: "", trading_partner_id: "" });
+  const [cases, setCases] = useState([]);
+  const [claims, setClaims] = useState([]);
+  const [caseId, setCaseId] = useState("");
+  const [claimId, setClaimId] = useState("");
+  const [log, setLog] = useState([]);
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  const loadAll = useCallback(() => {
+    api(apiBase, "/v1/connect/config").then(c => {
+      setCfg(c);
+      setForm(f => ({ ...f, partner_id: c.partner_id, mode: c.mode, base_url: c.base_url, trading_partner_id: c.trading_partner_id }));
+    }).catch(e => setError(e.message));
+    api(apiBase, "/v1/connect/log?limit=60").then(setLog).catch(() => {});
+    api(apiBase, "/v1/oncology/previsit/cases").then(d => { setCases(d); if (d[0]) setCaseId(c => c || d[0].case_id); }).catch(() => {});
+    api(apiBase, "/v1/oncology/precheck/claims").then(d => { setClaims(d); if (d[0]) setClaimId(c => c || d[0].claim_id); }).catch(() => {});
+  }, [apiBase]);
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  async function saveCfg(e) {
+    e.preventDefault();
+    try {
+      const c = await api(apiBase, "/v1/connect/config", { method: "POST", body: JSON.stringify(form) });
+      setCfg(c); setMsg("Partner connection saved."); setError(null);
+    } catch (e2) { setError(e2.message); }
+  }
+  async function run(label, path, body) {
+    setBusy(label); setMsg(null);
+    try {
+      const r = await api(apiBase, path, { method: "POST", body: JSON.stringify(body || {}) });
+      setMsg(typeof r === "object" ? summarize(label, r) : String(r));
+      setError(null);
+      loadAll();
+    } catch (e2) { setError(e2.message); }
+    setBusy("");
+  }
+  function summarize(label, r) {
+    if (label === "eligibility") return `271 received — coverage ${r.response.eligibility}${r.benefits_updated ? ", benefit accumulators updated" : ""} (trace ${r.response.trace || "n/a"})`;
+    if (label === "submit") return `837 ${r.acknowledgement.status} — ${r.acknowledgement.message || ""} (trace ${r.acknowledgement.trace || "n/a"})`;
+    if (label === "poll") return `${r.remits_processed} remittance(s) processed` + (r.results[0] ? ` — ${r.results[0].summary}` : "");
+    return "Done";
+  }
+
+  const dirTone = d => d === "outbound" ? "blue" : "ok";
+  const statusTone = s => s === "rejected" || s === "error" ? "bad" : s === "accepted" || s === "received" ? "ok" : "warn";
+
+  return (
+    <div>
+      <div className="mb-4">
+        <h2 className="text-2xl font-bold">Connections</h2>
+        <p className="text-sm text-sub mt-1">Real-time exchange with clearinghouses and EHRs — 270/271 eligibility, 837 claim submission, 835 remittance, and partner-pushed webhooks. Adapters isolate transport, so a live partner is a credentials change, not a rebuild.</p>
+      </div>
+      <ErrorBanner msg={error} />
+      {msg && <div className="mb-4 bg-okbg text-okt text-sm rounded-lg px-4 py-3">{msg}</div>}
+
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <div className="lg:col-span-2 space-y-4">
+          <Card className="p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold">Trading partner</h3>
+              {cfg && <Pill tone={cfg.mode === "mock" ? "warn" : "ok"}>{cfg.mode === "mock" ? "simulator" : cfg.mode}</Pill>}
+            </div>
+            {cfg && (
+              <form onSubmit={saveCfg} className="space-y-2.5">
+                <div>
+                  <Label>Partner</Label>
+                  <Select value={form.partner_id} onChange={e => {
+                    const p = cfg.presets.find(x => x.id === e.target.value);
+                    setForm({ ...form, partner_id: e.target.value, mode: p ? p.mode : "rest", base_url: p ? p.base_url : "" });
+                  }}>
+                    {cfg.presets.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                  </Select>
+                </div>
+                {form.mode !== "mock" && (
+                  <React.Fragment>
+                    <div><Label>API base URL</Label><TextInput value={form.base_url} onChange={e => setForm({ ...form, base_url: e.target.value })} className="font-mono text-xs" /></div>
+                    <div><Label>API key / bearer token</Label><TextInput type="password" value={form.api_key} onChange={e => setForm({ ...form, api_key: e.target.value })} placeholder={cfg.has_api_key ? "•••••• saved" : "from your partner portal"} /></div>
+                  </React.Fragment>
+                )}
+                <div><Label>Trading partner ID</Label><TextInput value={form.trading_partner_id} onChange={e => setForm({ ...form, trading_partner_id: e.target.value })} className="font-mono text-xs" /></div>
+                <Button type="submit">Save connection</Button>
+              </form>
+            )}
+          </Card>
+
+          <Card className="p-5">
+            <h3 className="font-bold mb-1">Inbound webhook</h3>
+            <p className="text-xs text-sub mb-2">Give this to the partner for real-time 835/277 pushes. Requests must carry <span className="font-mono">X-Signature: sha256=…</span> (HMAC of the body using the secret).</p>
+            {cfg && (
+              <React.Fragment>
+                <div className="flex gap-2">
+                  <TextInput readOnly value={cfg.webhook_url} className="font-mono text-xs" />
+                  <Button variant="ghost" onClick={() => { navigator.clipboard.writeText(cfg.webhook_url); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>{copied ? "Copied ✓" : "Copy"}</Button>
+                </div>
+                <p className="text-[11px] text-sub mt-1.5">Secret: <span className="font-mono">{cfg.webhook_secret.slice(0, 8)}…</span></p>
+                {!cfg.webhook_public && (
+                  <p className="text-xs text-warnt bg-warnbg rounded px-3 py-2 mt-2">
+                    Local address — partners can't reach it. Run <span className="font-mono">tunnel.bat</span> for a public HTTPS URL, or deploy the backend.
+                  </p>
+                )}
+              </React.Fragment>
+            )}
+          </Card>
+        </div>
+
+        <div className="lg:col-span-3 space-y-4">
+          <Card className="p-5">
+            <h3 className="font-bold mb-3">Run a transaction</h3>
+            <div className="space-y-3">
+              <div className="flex items-end gap-2 flex-wrap">
+                <div className="flex-1 min-w-[180px]">
+                  <Label>270 · Real-time eligibility for case</Label>
+                  <Select value={caseId} onChange={e => setCaseId(e.target.value)}>
+                    {cases.map(c => <option key={c.case_id} value={c.case_id}>{c.patient_name || c.patient_ref} · {c.case_id}</option>)}
+                  </Select>
+                </div>
+                <Button disabled={busy === "eligibility" || !caseId} onClick={() => run("eligibility", "/v1/connect/eligibility", { case_id: caseId })}>
+                  {busy === "eligibility" ? "Checking…" : "Check eligibility"}
+                </Button>
+              </div>
+              <div className="flex items-end gap-2 flex-wrap">
+                <div className="flex-1 min-w-[180px]">
+                  <Label>837 · Submit claim</Label>
+                  <Select value={claimId} onChange={e => setClaimId(e.target.value)}>
+                    {claims.map(c => <option key={c.claim_id} value={c.claim_id}>{c.patient_name || c.claim_id} · {money(c.billed_amount)}{c.rule_blockers.length ? ` · ${c.rule_blockers.length} blocker(s)` : ""}</option>)}
+                  </Select>
+                </div>
+                <Button disabled={busy === "submit" || !claimId} onClick={() => run("submit", "/v1/connect/submit", { claim_id: claimId })}>
+                  {busy === "submit" ? "Submitting…" : "Submit claim"}
+                </Button>
+              </div>
+              <div className="flex items-center justify-between gap-2 pt-2 border-t border-line">
+                <span className="text-sm text-sub">835 · Pull available remittances and post denials automatically</span>
+                <Button variant="ghost" disabled={busy === "poll"} onClick={() => run("poll", "/v1/connect/poll-remits")}>
+                  {busy === "poll" ? "Polling…" : "Poll remittances"}
+                </Button>
+              </div>
+            </div>
+            <p className="text-xs text-sub mt-3 pt-3 border-t border-line">Claim submission is blocked while hard rule failures are open — the point of the product. Resolve the exception first, or the API can force it for testing.</p>
+          </Card>
+
+          <Card>
+            <div className="px-5 py-3.5 border-b border-line flex items-center justify-between">
+              <h3 className="font-bold">Exchange log</h3>
+              <span className="text-xs text-sub">{log.length} transactions</span>
+            </div>
+            <div className="divide-y divide-line max-h-[380px] overflow-y-auto">
+              {log.map(x => (
+                <div key={x.id} className="px-5 py-2.5 text-sm">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Pill tone={dirTone(x.direction)}>{x.direction === "outbound" ? "→ sent" : "← received"}</Pill>
+                    <span className="font-mono text-xs font-bold">{x.kind}</span>
+                    <Pill tone={statusTone(x.status)}>{x.status}</Pill>
+                    {x.reference && <span className="font-mono text-xs text-sub">{x.reference}</span>}
+                    <span className="text-xs text-sub ml-auto">{String(x.ts).slice(0, 19).replace("T", " ")}</span>
+                  </div>
+                  {x.detail && <div className="text-xs text-sub mt-0.5">{x.detail}</div>}
+                </div>
+              ))}
+              {log.length === 0 && <p className="px-5 py-3 text-sub text-sm">No exchanges yet — run an eligibility check or submit a claim above.</p>}
+            </div>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- FHIR / Epic
+function FhirTab({ apiBase, go }) {
+  const [config, setConfig] = useState(null);
+  const [baseUrl, setBaseUrl] = useState("");
+  const [token, setToken] = useState("");
+  const [query, setQuery] = useState("");
+  const [patients, setPatients] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [importMsg, setImportMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const [epic, setEpic] = useState(null);
+  const [clientId, setClientId] = useState("");
+  const [epicMsg, setEpicMsg] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  const loadEpic = useCallback(() => {
+    api(apiBase, "/v1/fhir/epic/status").then(s => { setEpic(s); if (s.client_id) setClientId(s.client_id); }).catch(() => {});
+  }, [apiBase]);
+
+  useEffect(() => {
+    api(apiBase, "/v1/fhir/config").then(c => { setConfig(c); setBaseUrl(c.base_url); }).catch(e => setError(e.message));
+    loadEpic();
+  }, [apiBase, loadEpic]);
+
+  async function connectEpic(e) {
+    e.preventDefault();
+    setEpicMsg("Requesting token from Epic…");
+    try {
+      const r = await api(apiBase, "/v1/fhir/epic/connect", { method: "POST", body: JSON.stringify({ client_id: clientId }) });
+      setEpicMsg(`Connected to Epic — token valid ${Math.round((r.expires_in || 3600) / 60)} min (auto-renews).`);
+      setError(null);
+      loadEpic();
+      api(apiBase, "/v1/fhir/config").then(c => { setConfig(c); setBaseUrl(c.base_url); });
+    } catch (e2) { setEpicMsg(null); setError(e2.message); }
+  }
+
+  async function saveConfig(e) {
+    e.preventDefault();
+    try {
+      const c = await api(apiBase, "/v1/fhir/config", { method: "POST", body: JSON.stringify({ base_url: baseUrl, token }) });
+      setConfig(c); setToken(""); setError(null);
+      setPatients(null); setSummary(null);
+    } catch (e2) { setError(e2.message); }
+  }
+  async function search(e) {
+    e.preventDefault();
+    setBusy(true); setSummary(null);
+    try {
+      setPatients(await api(apiBase, "/v1/fhir/patients" + (query ? "?name=" + encodeURIComponent(query) : "")));
+      setError(null);
+    } catch (e2) { setError(e2.message); setPatients(null); }
+    setBusy(false);
+  }
+  async function openPatient(id) {
+    setBusy(true);
+    try {
+      setSummary(await api(apiBase, `/v1/fhir/patients/${id}/summary`));
+      setImportMsg(null); setError(null);
+    } catch (e2) { setError(e2.message); }
+    setBusy(false);
+  }
+  async function doImport() {
+    setBusy(true);
+    try {
+      const r = await api(apiBase, `/v1/fhir/import/${summary.patient.id}`, { method: "POST" });
+      setImportMsg(r.case.case_id);
+      setError(null);
+    } catch (e2) { setError(e2.message); }
+    setBusy(false);
+  }
+
+  return (
+    <div>
+      <div className="mb-4">
+        <h2 className="text-2xl font-bold">FHIR / Epic connector</h2>
+        <p className="text-sm text-sub mt-1">Live FHIR R4 reads (Patient · Condition · Coverage) — the same resource layer the Epic SMART on FHIR integration uses (PRD Section 8, milestone M9). Production Epic requires App Orchard registration; the Epic sandbox works with a free developer token from fhir.epic.com.</p>
+      </div>
+      <ErrorBanner msg={error} />
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <div className="lg:col-span-2 space-y-4">
+          <Card className="p-5">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="font-bold">Epic connection</h3>
+              {epic && (epic.connected
+                ? <Pill tone="ok">connected · {Math.round(epic.token_valid_seconds / 60)} min left</Pill>
+                : <Pill tone="warn">not connected</Pill>)}
+            </div>
+            <p className="text-xs text-sub mb-3">Backend Services OAuth — the server signs the JWT and renews tokens automatically. No manual token pasting.</p>
+            {epic && (
+              <div className="space-y-3">
+                <div>
+                  <Label>Step 1 · Your JWK Set URL (paste into Epic)</Label>
+                  <div className="flex gap-2">
+                    <TextInput readOnly value={epic.jwks_url} className="font-mono text-xs" />
+                    <Button variant="ghost" onClick={() => { navigator.clipboard.writeText(epic.jwks_url); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>{copied ? "Copied ✓" : "Copy"}</Button>
+                  </div>
+                  {!epic.jwks_public && (
+                    <p className="text-xs text-sub bg-page rounded px-3 py-2 mt-1.5">
+                      This local address isn't reachable by Epic — that's fine if you've published the same key elsewhere (e.g. a GitHub gist or your deployed backend at <span className="font-mono">/jwks.json</span>). Epic only needs to fetch the public key; token requests go outbound from this server.
+                    </p>
+                  )}
+                  <p className="text-xs text-sub mt-1.5">
+                    <span className="font-semibold">Getting <span className="font-mono">invalid_client</span>?</span> Epic can take up to 12 hours to sync a newly published JWK Set. Confirm the URL saved in Epic and that the app audience is <b>Backend Systems</b>, then retry — no changes needed here.
+                  </p>
+                  <p className="text-[11px] text-sub mt-1">Key ID (kid): <span className="font-mono">{epic.kid.slice(0, 22)}…</span></p>
+                </div>
+                <form onSubmit={connectEpic}>
+                  <Label>Step 2 · Non-production Client ID from fhir.epic.com</Label>
+                  <div className="flex gap-2">
+                    <TextInput value={clientId} onChange={e => setClientId(e.target.value)} placeholder="e.g. 0oa3…" className="font-mono text-xs" />
+                    <Button type="submit" disabled={!clientId.trim()}>{epic.connected ? "Reconnect" : "Connect"}</Button>
+                  </div>
+                </form>
+                {epicMsg && <p className="text-xs text-okt bg-okbg rounded px-3 py-2">{epicMsg}</p>}
+              </div>
+            )}
+          </Card>
+          <Card className="p-5">
+            <h3 className="font-bold mb-3">FHIR server</h3>
+            {config && (
+              <form onSubmit={saveConfig} className="space-y-2.5">
+                <div>
+                  <Label>Preset</Label>
+                  <Select value={config.presets.find(p => p.base_url === baseUrl) ? baseUrl : "custom"}
+                    onChange={e => { if (e.target.value !== "custom") setBaseUrl(e.target.value); }}>
+                    {config.presets.map(p => <option key={p.id} value={p.base_url}>{p.label}</option>)}
+                    <option value="custom">Custom URL…</option>
+                  </Select>
+                </div>
+                <div><Label>Base URL</Label><TextInput value={baseUrl} onChange={e => setBaseUrl(e.target.value)} className="font-mono text-xs" /></div>
+                <div><Label>Bearer token (Epic sandbox / secured servers)</Label>
+                  <TextInput type="password" value={token} onChange={e => setToken(e.target.value)}
+                    placeholder={config.has_token ? "•••••• saved — enter to replace" : "leave empty for open sandboxes"} /></div>
+                <Button type="submit">Save connection</Button>
+              </form>
+            )}
+          </Card>
+          <Card className="p-5">
+            <h3 className="font-bold mb-3">Find patients</h3>
+            <form onSubmit={search} className="flex gap-2">
+              <TextInput value={query} onChange={e => setQuery(e.target.value)} placeholder="Name (or empty for first 10)" />
+              <Button type="submit" disabled={busy}>{busy ? "…" : "Search"}</Button>
+            </form>
+            {patients && (
+              <div className="divide-y divide-line mt-3 -mx-5">
+                {patients.map(p => (
+                  <div key={p.id} onClick={() => openPatient(p.id)}
+                    className={`px-5 py-2.5 cursor-pointer hover:bg-hoverbg ${summary && summary.patient.id === p.id ? "bg-accentsel" : ""}`}>
+                    <div className="font-semibold text-sm">{p.name}</div>
+                    <div className="text-xs text-sub">{p.gender} · born <span className="font-mono">{p.birthDate || "?"}</span> · <span className="font-mono">{p.id}</span></div>
+                  </div>
+                ))}
+                {patients.length === 0 && <p className="px-5 py-3 text-sub text-sm">No patients found.</p>}
+              </div>
+            )}
+          </Card>
+        </div>
+
+        <div className="lg:col-span-3">
+          {summary ? (
+            <Card className="p-5">
+              <div className="flex items-start justify-between mb-1">
+                <div>
+                  <h3 className="text-xl font-bold">{summary.patient.name}</h3>
+                  <p className="text-sm text-sub">{summary.age_sex} · {summary.patient.gender} · born <span className="font-mono">{summary.patient.birthDate || "?"}</span></p>
+                  <p className="text-xs text-sub font-mono mt-0.5">FHIR Patient/{summary.patient.id}</p>
+                </div>
+                <Button onClick={doImport} disabled={busy}>{busy ? "Importing…" : "Import as pre-visit case"}</Button>
+              </div>
+              {importMsg && (
+                <div className="bg-okbg text-okt rounded-lg px-4 py-3 mt-3 text-sm flex items-center justify-between">
+                  <span>Imported — L0 checks ran on <span className="font-mono font-semibold">{importMsg}</span></span>
+                  <button onClick={() => go("previsit", { caseId: importMsg })} className="font-semibold hover:underline">Open case →</button>
+                </div>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <div>
+                  <h4 className="text-[11px] uppercase tracking-wider text-sub font-semibold mb-2">Conditions ({summary.conditions.length})</h4>
+                  <div className="space-y-1.5">
+                    {summary.conditions.map((c, i) => (
+                      <div key={i} className="bg-page rounded-lg px-3 py-2 text-sm">
+                        {c.text}
+                        <div className="text-xs text-sub font-mono">{c.icd10 || "no ICD-10 coding"} {c.status && `· ${c.status}`}</div>
+                      </div>
+                    ))}
+                    {summary.conditions.length === 0 && <p className="text-xs text-sub">None on file for this patient.</p>}
+                  </div>
+                </div>
+                <div>
+                  <h4 className="text-[11px] uppercase tracking-wider text-sub font-semibold mb-2">Coverage ({summary.coverage.length})</h4>
+                  <div className="space-y-1.5">
+                    {summary.coverage.map((c, i) => (
+                      <div key={i} className="bg-page rounded-lg px-3 py-2 text-sm">
+                        {c.payor}
+                        <div className="text-xs text-sub">{c.plan} {c.status && <Pill tone={c.status === "active" ? "ok" : "gray"}>{c.status}</Pill>}</div>
+                      </div>
+                    ))}
+                    {summary.coverage.length === 0 && <p className="text-xs text-sub">No coverage resources — import will flag eligibility for verification.</p>}
+                  </div>
+                </div>
+              </div>
+            </Card>
+          ) : (
+            <Card className="p-8 text-center">
+              <h3 className="font-bold text-lg mb-1">No patient selected</h3>
+              <p className="text-sm text-sub">Search the connected FHIR server and click a patient to see demographics, conditions, and coverage — then import them straight into the pre-visit pipeline.</p>
+            </Card>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Login / MFA
+const COUNTRY_CODES = [
+  ["+1", "United States / Canada"], ["+44", "United Kingdom"], ["+91", "India"],
+  ["+61", "Australia"], ["+64", "New Zealand"], ["+353", "Ireland"],
+  ["+49", "Germany"], ["+33", "France"], ["+34", "Spain"], ["+39", "Italy"],
+  ["+31", "Netherlands"], ["+41", "Switzerland"], ["+46", "Sweden"], ["+47", "Norway"],
+  ["+45", "Denmark"], ["+358", "Finland"], ["+48", "Poland"], ["+351", "Portugal"],
+  ["+30", "Greece"], ["+90", "Turkey"], ["+7", "Russia / Kazakhstan"],
+  ["+86", "China"], ["+81", "Japan"], ["+82", "South Korea"], ["+852", "Hong Kong"],
+  ["+65", "Singapore"], ["+60", "Malaysia"], ["+66", "Thailand"], ["+84", "Vietnam"],
+  ["+63", "Philippines"], ["+62", "Indonesia"], ["+880", "Bangladesh"], ["+92", "Pakistan"],
+  ["+94", "Sri Lanka"], ["+977", "Nepal"], ["+971", "United Arab Emirates"],
+  ["+966", "Saudi Arabia"], ["+974", "Qatar"], ["+972", "Israel"],
+  ["+20", "Egypt"], ["+234", "Nigeria"], ["+254", "Kenya"], ["+27", "South Africa"],
+  ["+212", "Morocco"], ["+233", "Ghana"],
+  ["+52", "Mexico"], ["+55", "Brazil"], ["+54", "Argentina"], ["+56", "Chile"],
+  ["+57", "Colombia"], ["+51", "Peru"],
+];
+function LoginScreen({ apiBase, onLogin }) {
+  const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("");
+  const [challenge, setChallenge] = useState(null);
+  const [mfaMethod, setMfaMethod] = useState("totp");
+  const [phoneHint, setPhoneHint] = useState("");
+  const [code, setCode] = useState("");
+  const [demoCode, setDemoCode] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submitPassword(e) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      const r = await api(apiBase, "/v1/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+      if (r.mfa_required) {
+        setChallenge(r.challenge);
+        setMfaMethod(r.method || "totp");
+        setPhoneHint(r.phone_hint || "");
+        api(apiBase, `/v1/auth/mfa/demo-code?challenge=${encodeURIComponent(r.challenge)}`).then(setDemoCode).catch(() => {});
+      } else {
+        onLogin(r.token, r.username);
+      }
+    } catch (e2) { setError("Invalid username or password"); }
+    setBusy(false);
+  }
+
+  async function resendSms() {
+    try {
+      await api(apiBase, `/v1/auth/mfa/resend-sms?challenge=${encodeURIComponent(challenge)}`, { method: "POST" });
+      api(apiBase, `/v1/auth/mfa/demo-code?challenge=${encodeURIComponent(challenge)}`).then(setDemoCode).catch(() => {});
+      setError(null);
+    } catch (e2) { setError("Could not resend code"); }
+  }
+
+  async function submitCode(e) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      const r = await api(apiBase, "/v1/auth/mfa/verify", { method: "POST", body: JSON.stringify({ challenge, code }) });
+      onLogin(r.token, r.username);
+    } catch (e2) { setError("Invalid authenticator code"); }
+    setBusy(false);
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-4">
+      <Card className="p-8 w-full max-w-sm">
+        <div className="flex items-center gap-2.5 mb-6">
+          <span className="w-10 h-10 rounded-xl bg-accent flex items-center justify-center">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M12 2l7 10-7 10-7-10z"/></svg>
+          </span>
+          <div>
+            <div className="font-bold">NetGain Innovations</div>
+            <div className="text-xs text-sub">Oncology RCM Workspace</div>
+          </div>
+        </div>
+        {!challenge ? (
+          <form onSubmit={submitPassword} className="space-y-3">
+            <div><Label>Username</Label><TextInput value={username} onChange={e => setUsername(e.target.value)} autoFocus /></div>
+            <div><Label>Password</Label><TextInput type="password" value={password} onChange={e => setPassword(e.target.value)} /></div>
+            {error && <p className="text-xs text-badt">{error}</p>}
+            <Button type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</Button>
+            <p className="text-xs text-sub pt-2 border-t border-line">Demo credentials: <span className="font-mono">admin</span> / <span className="font-mono">precheck123</span></p>
+          </form>
+        ) : (
+          <form onSubmit={submitCode} className="space-y-3">
+            <div className="bg-accentbg text-accent text-sm rounded-lg px-4 py-3">
+              {mfaMethod === "sms"
+                ? <span>We sent a 6-digit code by text to <span className="font-mono font-semibold">{phoneHint}</span>.</span>
+                : "Two-factor authentication is enabled. Enter the 6-digit code from your authenticator app."}
+            </div>
+            <div><Label>{mfaMethod === "sms" ? "Text-message code" : "Authenticator code"}</Label>
+              <TextInput value={code} onChange={e => setCode(e.target.value)} placeholder="123456" autoFocus className="font-mono" /></div>
+            {demoCode && <p className="text-xs text-warnt bg-warnbg rounded px-3 py-2">Demo helper: current code is <span className="font-mono font-bold">{demoCode.code}</span> (disabled in production)</p>}
+            {error && <p className="text-xs text-badt">{error}</p>}
+            <div className="flex items-center gap-3">
+              <Button type="submit" disabled={busy}>{busy ? "Verifying…" : "Verify"}</Button>
+              {mfaMethod === "sms" && <button type="button" onClick={resendSms} className="text-xs text-accent hover:underline">Resend code</button>}
+            </div>
+            <button type="button" onClick={() => { setChallenge(null); setCode(""); }} className="text-xs text-sub hover:underline">← Back to password</button>
+          </form>
+        )}
+        <p className="text-[11px] text-sub mt-6">Fictional demo environment — do not enter real credentials or PHI.</p>
+      </Card>
+    </div>
+  );
+}
+
+function AccountPanel({ apiBase, me, onClose, onChanged }) {
+  const [method, setMethod] = useState("totp");
+  const [setup, setSetup] = useState(null);
+  const [smsSetup, setSmsSetup] = useState(null);
+  const [country, setCountry] = useState("+1");
+  const [phone, setPhone] = useState("");
+  const [code, setCode] = useState("");
+  const [demoCode, setDemoCode] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const [error, setError] = useState(null);
+
+  async function startSetup() {
+    try {
+      const s = await api(apiBase, "/v1/auth/mfa/setup", { method: "POST" });
+      setSetup(s); setSmsSetup(null); setMsg(null); setError(null);
+      api(apiBase, "/v1/auth/mfa/demo-code").then(setDemoCode).catch(() => {});
+    } catch (e) { setError(e.message); }
+  }
+  async function startSmsSetup(e) {
+    e.preventDefault();
+    try {
+      const s = await api(apiBase, "/v1/auth/mfa/setup-sms", { method: "POST", body: JSON.stringify({ country_code: country, phone }) });
+      setSmsSetup(s); setSetup(null); setMsg(null); setError(null);
+      api(apiBase, "/v1/auth/mfa/demo-code").then(setDemoCode).catch(() => {});
+    } catch (e2) { setError(String(e2.message).includes("422") ? "Check the country code and phone number" : e2.message); }
+  }
+  async function enable(e) {
+    e.preventDefault();
+    try {
+      const endpoint = smsSetup ? "/v1/auth/mfa/enable-sms" : "/v1/auth/mfa/enable";
+      await api(apiBase, endpoint, { method: "POST", body: JSON.stringify({ code }) });
+      setMsg(smsSetup ? "SMS MFA enabled — a code will be texted at each sign-in." : "Authenticator MFA enabled — you'll be asked for a code at next sign-in.");
+      setSetup(null); setSmsSetup(null); setCode(""); setError(null);
+      onChanged();
+    } catch (e2) { setError("Invalid code — try again"); }
+  }
+  async function disable(e) {
+    e.preventDefault();
+    try {
+      await api(apiBase, "/v1/auth/mfa/disable", { method: "POST", body: JSON.stringify({ code }) });
+      setMsg("MFA disabled.");
+      setCode(""); setError(null);
+      onChanged();
+    } catch (e2) { setError("Invalid code — try again"); }
+  }
+
+  // --- user management (admin only) ---
+  const [users, setUsers] = useState([]);
+  const [nu, setNu] = useState({ username: "", password: "", role: "billing" });
+  const [umMsg, setUmMsg] = useState(null);
+  const loadUsers = useCallback(() => {
+    if (me.role === "admin") api(apiBase, "/v1/auth/users").then(setUsers).catch(() => {});
+  }, [apiBase, me.role]);
+  useEffect(() => { loadUsers(); }, [loadUsers]);
+
+  async function createUser(e) {
+    e.preventDefault();
+    try {
+      await api(apiBase, "/v1/auth/users", { method: "POST", body: JSON.stringify(nu) });
+      setUmMsg(`User ${nu.username} created (${nu.role})`);
+      setNu({ username: "", password: "", role: "billing" });
+      loadUsers();
+    } catch (e2) { setUmMsg(e2.message); }
+  }
+  async function changeRole(username, role) {
+    try {
+      await api(apiBase, `/v1/auth/users/${username}`, { method: "PATCH", body: JSON.stringify({ role }) });
+      setUmMsg(`${username} → ${role}`);
+      loadUsers();
+    } catch (e2) { setUmMsg(e2.message); }
+  }
+  async function removeUser(username) {
+    try {
+      await api(apiBase, `/v1/auth/users/${username}`, { method: "DELETE" });
+      setUmMsg(`${username} deleted`);
+      loadUsers();
+    } catch (e2) { setUmMsg(e2.message); }
+  }
+  async function resetPassword(username) {
+    const pw = prompt(`New password for ${username} (min 8 chars):`);
+    if (!pw) return;
+    try {
+      await api(apiBase, `/v1/auth/users/${username}`, { method: "PATCH", body: JSON.stringify({ password: pw }) });
+      setUmMsg(`Password reset for ${username}`);
+    } catch (e2) { setUmMsg(e2.message); }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/30 z-50 flex items-start justify-end p-4" onClick={onClose}>
+      <Card className="p-5 w-full max-w-md mt-14 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div onClick={e => e.stopPropagation()}>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-bold">Account security</h3>
+            <button onClick={onClose} className="text-sub hover:text-ink text-lg leading-none">×</button>
+          </div>
+          <p className="text-sm text-sub mb-3">
+            Signed in as <span className="font-semibold text-ink">{me.username}</span> <Pill tone="blue">{me.role}</Pill> · MFA{" "}
+            {me.mfa_enabled
+              ? <Pill tone="ok">{me.mfa_method === "sms" ? `SMS ${me.phone_hint}` : "authenticator app"}</Pill>
+              : <Pill tone="warn">off</Pill>}
+          </p>
+          {msg && <p className="text-xs text-okt bg-okbg rounded px-3 py-2 mb-3">{msg}</p>}
+          {error && <p className="text-xs text-badt bg-badbg rounded px-3 py-2 mb-3">{error}</p>}
+          {!me.mfa_enabled && !setup && !smsSetup && (
+            <div className="space-y-2">
+              <Label>Choose a second factor</Label>
+              <div className="flex gap-2">
+                <button onClick={() => setMethod("totp")} className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold border ${method === "totp" ? "border-accent bg-accentbg text-accent" : "border-line text-sub"}`}>Authenticator app<br /><span className="font-normal">Google Auth / Authy</span></button>
+                <button onClick={() => setMethod("sms")} className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold border ${method === "sms" ? "border-accent bg-accentbg text-accent" : "border-line text-sub"}`}>Text message<br /><span className="font-normal">code sent by SMS</span></button>
+              </div>
+              {method === "totp" ? (
+                <Button onClick={startSetup}>Set up authenticator MFA</Button>
+              ) : (
+                <form onSubmit={startSmsSetup} className="space-y-2">
+                  <div className="flex gap-2">
+                    <select value={country} onChange={e => setCountry(e.target.value)}
+                      className="bg-card border border-line rounded-lg px-2 py-1.5 text-sm w-40 focus:outline-none focus:border-accent">
+                      {COUNTRY_CODES.map(([c, name]) => <option key={c} value={c}>{c} {name}</option>)}
+                    </select>
+                    <TextInput value={phone} onChange={e => setPhone(e.target.value)} placeholder="Phone number" className="font-mono" />
+                  </div>
+                  <Button type="submit">Send verification code</Button>
+                </form>
+              )}
+            </div>
+          )}
+          {setup && (
+            <div className="space-y-3">
+              <p className="text-xs text-sub">Add this secret to Google Authenticator or Authy (choose "enter key manually"):</p>
+              <div className="bg-page rounded-lg px-3 py-2 font-mono text-sm break-all select-all">{setup.secret}</div>
+              {demoCode && <p className="text-xs text-warnt bg-warnbg rounded px-3 py-2">Demo helper — current code: <span className="font-mono font-bold">{demoCode.code}</span></p>}
+              <form onSubmit={enable} className="flex gap-2">
+                <TextInput value={code} onChange={e => setCode(e.target.value)} placeholder="6-digit code" className="font-mono" />
+                <Button type="submit">Confirm</Button>
+              </form>
+            </div>
+          )}
+          {smsSetup && (
+            <div className="space-y-3">
+              <p className="text-xs text-sub">A verification code was sent to <span className="font-mono font-semibold">{smsSetup.phone_hint}</span>. Enter it to enable SMS MFA.</p>
+              {demoCode && <p className="text-xs text-warnt bg-warnbg rounded px-3 py-2">Demo helper — the "texted" code is: <span className="font-mono font-bold">{demoCode.code}</span> (real SMS requires a provider; see server _send_sms hook)</p>}
+              <form onSubmit={enable} className="flex gap-2">
+                <TextInput value={code} onChange={e => setCode(e.target.value)} placeholder="6-digit code" className="font-mono" />
+                <Button type="submit">Confirm</Button>
+              </form>
+            </div>
+          )}
+          {me.mfa_enabled && (
+            <form onSubmit={disable} className="space-y-2">
+              <Label>Enter a current code to disable MFA</Label>
+              {me.mfa_method === "sms" && (
+                <button type="button" onClick={async () => {
+                  try { await api(apiBase, "/v1/auth/mfa/resend-sms", { method: "POST" });
+                    api(apiBase, "/v1/auth/mfa/demo-code").then(setDemoCode).catch(() => {}); } catch (e2) {}
+                }} className="text-xs text-accent hover:underline">Send me a code</button>
+              )}
+              {demoCode && me.mfa_method === "sms" && <p className="text-xs text-warnt bg-warnbg rounded px-3 py-2">Demo helper — code: <span className="font-mono font-bold">{demoCode.code}</span></p>}
+              <div className="flex gap-2">
+                <TextInput value={code} onChange={e => setCode(e.target.value)} placeholder="6-digit code" className="font-mono" />
+                <Button type="submit" variant="danger">Disable</Button>
+              </div>
+            </form>
+          )}
+
+          {me.role === "admin" && (
+            <div className="border-t border-line mt-5 pt-4">
+              <h4 className="font-bold text-sm mb-1">User management <span className="text-[10px] font-bold text-accent bg-accentbg px-1.5 py-0.5 rounded ml-1">ADMIN</span></h4>
+              <p className="text-xs text-sub mb-3">Roles: <b>admin</b> = everything · <b>billing</b> = full workspace · <b>viewer</b> = read-only</p>
+              {umMsg && <p className="text-xs text-accent bg-accentbg rounded px-3 py-2 mb-2">{umMsg}</p>}
+              <div className="space-y-2 mb-3">
+                {users.map(u => (
+                  <div key={u.username} className="flex items-center gap-2 bg-page rounded-lg px-3 py-2 text-sm">
+                    <span className="font-semibold flex-1">{u.username}{u.mfa_enabled ? <span className="text-okt text-xs ml-1" title="MFA enabled">✓MFA</span> : null}</span>
+                    <select value={u.role} onChange={e => changeRole(u.username, e.target.value)}
+                      disabled={u.username === me.username}
+                      className="bg-card border border-line rounded px-1.5 py-1 text-xs focus:outline-none">
+                      <option value="admin">admin</option><option value="billing">billing</option><option value="viewer">viewer</option>
+                    </select>
+                    <button onClick={() => resetPassword(u.username)} className="text-xs text-accent hover:underline" title="Reset password">reset pw</button>
+                    {u.username !== me.username && (
+                      <button onClick={() => removeUser(u.username)} className="text-xs text-badt hover:underline">delete</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <form onSubmit={createUser} className="space-y-2">
+                <div className="flex gap-2">
+                  <TextInput required value={nu.username} onChange={e => setNu({ ...nu, username: e.target.value })} placeholder="new username" />
+                  <TextInput required type="password" value={nu.password} onChange={e => setNu({ ...nu, password: e.target.value })} placeholder="password (8+)" />
+                </div>
+                <div className="flex gap-2">
+                  <select value={nu.role} onChange={e => setNu({ ...nu, role: e.target.value })}
+                    className="bg-card border border-line rounded-lg px-2 py-1.5 text-sm flex-1 focus:outline-none focus:border-accent">
+                    <option value="billing">billing</option><option value="admin">admin</option><option value="viewer">viewer</option>
+                  </select>
+                  <Button type="submit">Add user</Button>
+                </div>
+              </form>
+            </div>
+          )}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Audit Log
+function AuditTab({ apiBase }) {
+  const [events, setEvents] = useState([]);
+  const [actorFilter, setActorFilter] = useState("");
+  const [actionFilter, setActionFilter] = useState("");
+  const [error, setError] = useState(null);
+
+  const load = useCallback(() => {
+    api(apiBase, "/v1/oncology/audit?limit=500").then(setEvents).catch(e => setError(e.message));
+  }, [apiBase]);
+  useEffect(() => { load(); }, [load]);
+
+  const actors = [...new Set(events.map(e => e.actor))].sort();
+  const actions = [...new Set(events.map(e => e.action))].sort();
+  const shown = events.filter(e =>
+    (!actorFilter || e.actor === actorFilter) && (!actionFilter || e.action === actionFilter));
+
+  const actorCounts = {};
+  events.forEach(e => { actorCounts[e.actor] = (actorCounts[e.actor] || 0) + 1; });
+
+  function exportCsv() {
+    const head = "Timestamp,Actor,Action,Entity type,Entity ID,Detail";
+    const body = shown.map(e => [e.ts, e.actor, e.action, e.entity_type, e.entity_id, `"${(e.detail || "").replaceAll('"', '""')}"`].join(","));
+    const blob = new Blob([[head, ...body].join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "audit_log.csv";
+    a.click();
+  }
+
+  const actionTone = a => a.includes("denied") || a.includes("denial") ? "bad"
+    : a.includes("resolved") || a.includes("evidence") ? "ok"
+    : a.includes("updated") ? "warn" : "blue";
+
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <h2 className="text-2xl font-bold">Audit log</h2>
+          <p className="text-sm text-sub mt-1">Append-only record of every change — who did what, to which record, and when. 7-year retention per PRD v1.1 Section 12.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="ghost" onClick={load}>Refresh</Button>
+          <Button onClick={exportCsv}>↓ Export CSV</Button>
+        </div>
+      </div>
+      <ErrorBanner msg={error} />
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <Card className="p-4">
+          <div className="text-xs text-sub">Total events</div>
+          <div className="text-3xl font-bold font-mono mt-1">{events.length}</div>
+        </Card>
+        {Object.entries(actorCounts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([actor, n]) => (
+          <Card key={actor} className="p-4 cursor-pointer" >
+            <div onClick={() => setActorFilter(actorFilter === actor ? "" : actor)}>
+              <div className="text-xs text-sub">by {actor}</div>
+              <div className={`text-3xl font-bold font-mono mt-1 ${actorFilter === actor ? "text-accent" : ""}`}>{n}</div>
+              <div className="text-[11px] text-sub mt-0.5">tap to filter</div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <Card>
+        <div className="px-5 py-3 border-b border-line flex items-center gap-3 flex-wrap">
+          <div className="w-44">
+            <Select value={actorFilter} onChange={e => setActorFilter(e.target.value)}>
+              <option value="">All actors</option>
+              {actors.map(a => <option key={a} value={a}>{a}</option>)}
+            </Select>
+          </div>
+          <div className="w-52">
+            <Select value={actionFilter} onChange={e => setActionFilter(e.target.value)}>
+              <option value="">All actions</option>
+              {actions.map(a => <option key={a} value={a}>{a}</option>)}
+            </Select>
+          </div>
+          <span className="text-xs text-sub ml-auto">{shown.length} of {events.length} events</span>
+        </div>
+        <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-card">
+              <tr className="text-left text-[11px] uppercase tracking-wider text-sub border-b border-line">
+                <th className="px-5 py-2.5">When (UTC)</th><th className="pr-3">Who</th><th className="pr-3">Action</th>
+                <th className="pr-3">Record</th><th className="pr-3">Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map(e => (
+                <tr key={e.id} className="border-b border-line hover:bg-hoverbg">
+                  <td className="px-5 py-2.5 font-mono text-xs text-sub whitespace-nowrap">{String(e.ts).slice(0, 19).replace("T", " ")}</td>
+                  <td className="pr-3"><Pill tone={e.actor === "system" || e.actor === "seed" ? "gray" : "blue"}>{e.actor}</Pill></td>
+                  <td className="pr-3"><Pill tone={actionTone(e.action)}>{e.action}</Pill></td>
+                  <td className="pr-3 font-mono text-xs whitespace-nowrap">{e.entity_type} · {e.entity_id}</td>
+                  <td className="pr-3 text-xs text-sub max-w-[320px] truncate" title={e.detail}>{e.detail}</td>
+                </tr>
+              ))}
+              {shown.length === 0 && <tr><td colSpan="5" className="px-5 py-4 text-sub text-sm">No events match this filter.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+      <p className="text-xs text-sub mt-3">System and seed events are automated; named actors come from the "Your name" field in the header. Records are append-only — corrections appear as new events, never edits.</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- shell
+const ACCENTS = [
+  { id: "blue", dot: "#2F5FE3" },
+  { id: "indigo", dot: "#6D28D9" },
+  { id: "orange", dot: "#EA580C" },
+];
+
+function App() {
+  const [apiBase, setApiBase] = useState(DEFAULT_API_BASE);
+  const [tab, setTab] = useState("previsit");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [counts, setCounts] = useState({ appeals: 0, exceptions: 0 });
+  const [accent, setAccent] = useState(() => {
+    const a = localStorage.getItem("ng_accent");
+    return a === "slate" ? "orange" : (a || "blue");  // migrate old slate choice
+  });
+  const [dark, setDark] = useState(() => localStorage.getItem("ng_dark") === "1");
+  const [userName, setUserName] = useState(() => localStorage.getItem("ng_user") || "");
+  const [navReq, setNavReq] = useState(null);
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem("ng_token") || "");
+  const [me, setMe] = useState(null);
+  const [showAccount, setShowAccount] = useState(false);
+
+  function go(targetTab, payload) {
+    setNavReq({ tab: targetTab, ...payload, token: Date.now() });
+    setTab(targetTab);
+  }
+
+  useEffect(() => { localStorage.setItem("ng_user", userName); }, [userName]);
+
+  const loadMe = useCallback(() => {
+    if (!authToken) { setMe(null); return; }
+    api(apiBase, "/v1/auth/me").then(setMe).catch(() => {
+      // Session invalid (e.g. server restarted, token expired) -> force login
+      setMe(null);
+      localStorage.removeItem("ng_token");
+      setAuthToken("");
+    });
+  }, [apiBase, authToken]);
+  useEffect(() => { loadMe(); }, [loadMe]);
+
+  useEffect(() => {
+    const h = () => setAuthToken("");
+    window.addEventListener("ng-auth-expired", h);
+    return () => window.removeEventListener("ng-auth-expired", h);
+  }, []);
+
+  function handleLogin(token, username) {
+    localStorage.setItem("ng_token", token);
+    localStorage.setItem("ng_user", username);
+    setUserName(username);
+    setAuthToken(token);
+  }
+  function signOut() {
+    localStorage.removeItem("ng_token");
+    setAuthToken("");
+    setMe(null);
+  }
+
+  useEffect(() => {
+    document.body.dataset.accent = accent;
+    document.body.classList.toggle("dark", dark);
+    localStorage.setItem("ng_accent", accent);
+    localStorage.setItem("ng_dark", dark ? "1" : "0");
+  }, [accent, dark]);
+
+  useEffect(() => {
+    if (!authToken) return;
+    Promise.all([
+      api(apiBase, "/v1/oncology/appeals/queue").catch(() => ({ open_count: 0 })),
+      api(apiBase, "/v1/oncology/exceptions").catch(() => []),
+    ]).then(([a, e]) => setCounts({
+      appeals: a.open_count || 0,
+      exceptions: e.filter(x => x.status === "OPEN").length,
+    }));
+  }, [apiBase, refreshKey, tab, authToken]);
+
+  // All hooks must run before this gate (React rules of hooks)
+  if (!authToken) return <LoginScreen apiBase={apiBase} onLogin={handleLogin} />;
+
+  const tabs = [
+    { id: "previsit", label: "Pre-Visit" },
+    { id: "denial", label: "Denial Prevention" },
+    { id: "eligibility", label: "Eligibility" },
+    { id: "coverage", label: "Coverage Rules" },
+    { id: "analytics", label: "Analytics" },
+    { id: "appeals", label: "Appeals", count: counts.appeals },
+    { id: "exceptions", label: "Exceptions", count: counts.exceptions },
+    { id: "edi", label: "EDI Intake" },
+    { id: "connect", label: "Connections" },
+    { id: "fhir", label: "FHIR / Epic" },
+    { id: "validation", label: "Validation" },
+    { id: "audit", label: "Audit Log" },
+  ];
+
+  return (
+    <div className="min-h-screen">
+      <div className="bg-warnbg text-warnt text-center text-xs font-semibold py-1.5 px-4">
+        Demonstration environment — all data is fictional · not for clinical or billing use · do not enter PHI
+      </div>
+      <header className="bg-card border-b border-line sticky top-0 z-10">
+        <div className="max-w-[1440px] mx-auto px-6 h-16 flex items-center gap-5">
+          <div className="flex items-center gap-2.5 shrink-0">
+            <span className="w-9 h-9 rounded-xl bg-accent flex items-center justify-center">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M12 2l7 10-7 10-7-10z"/></svg>
+            </span>
+            <div>
+              <span className="font-bold text-[15px]">NetGain Innovations</span>
+              <span className="ml-2 text-[10px] font-bold text-accent bg-accentbg px-1.5 py-0.5 rounded">AI</span>
+            </div>
+          </div>
+          <nav className="flex items-center gap-0.5 flex-1 overflow-x-auto">
+            {tabs.map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                className={`px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5 whitespace-nowrap transition ${tab === t.id ? "bg-accentbg text-accent" : "text-sub hover:text-ink"}`}>
+                {t.label}
+                {t.count > 0 && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${tab === t.id ? "bg-accent text-white" : "bg-chip text-sub"}`}>{t.count}</span>}
+              </button>
+            ))}
+          </nav>
+          <div className="flex items-center gap-3 text-xs shrink-0">
+            <div className="flex items-center gap-1.5 bg-page border border-line rounded-full px-2 py-1.5">
+              {ACCENTS.map(a => (
+                <button key={a.id} onClick={() => setAccent(a.id)} title={a.id}
+                  className={`w-4.5 h-4.5 rounded-full transition ${accent === a.id ? "ring-2 ring-offset-1 ring-accent" : ""}`}
+                  style={{ backgroundColor: a.dot, width: 18, height: 18 }}></button>
+              ))}
+            </div>
+            <button onClick={() => setShowAccount(true)} title="Account security (MFA)"
+              className="flex items-center gap-1.5 bg-page border border-line rounded-lg px-2.5 py-1.5 text-[11px] font-semibold hover:border-accent">
+              <span className="w-4 h-4 rounded-full bg-accent text-white flex items-center justify-center text-[9px] font-bold">{(me ? me.username : userName || "?").charAt(0).toUpperCase()}</span>
+              {me ? me.username : "account"}
+              {me && me.mfa_enabled && <span className="text-okt" title="MFA enabled">✓</span>}
+            </button>
+            <button onClick={signOut} title="Sign out"
+              className="text-[11px] text-sub hover:text-badt font-semibold">Sign out</button>
+            <button onClick={() => setDark(d => !d)} title={dark ? "Light mode" : "Dark mode"}
+              className="w-8 h-8 rounded-full bg-page border border-line flex items-center justify-center text-sub hover:text-ink transition">
+              {dark
+                ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" strokeLinecap="round"/></svg>
+                : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+            </button>
+            <span className="text-sub">API</span>
+            <input value={apiBase} onChange={e => setApiBase(e.target.value)}
+              className="bg-page border border-line rounded-lg px-2.5 py-1.5 w-40 font-mono text-[11px] focus:outline-none focus:border-accent" />
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-[1440px] mx-auto px-6 py-6">
+        {tab === "previsit" && <PrevisitTab apiBase={apiBase} onExceptionsChanged={() => setRefreshKey(k => k + 1)} navReq={navReq} go={go} />}
+        {tab === "denial" && <DenialTab apiBase={apiBase} navReq={navReq} go={go} />}
+        {tab === "eligibility" && <EligibilityTab apiBase={apiBase} go={go} />}
+        {tab === "coverage" && <CoverageTab apiBase={apiBase} navReq={navReq} go={go} />}
+        {tab === "analytics" && <AnalyticsTab apiBase={apiBase} />}
+        {tab === "appeals" && <AppealsTab apiBase={apiBase} go={go} />}
+        {tab === "exceptions" && <ExceptionsTab apiBase={apiBase} refreshKey={refreshKey} navReq={navReq} go={go} />}
+        {tab === "edi" && <EdiTab apiBase={apiBase} onDataChanged={() => setRefreshKey(k => k + 1)} />}
+        {tab === "connect" && <ConnectTab apiBase={apiBase} go={go} />}
+        {tab === "fhir" && <FhirTab apiBase={apiBase} go={go} />}
+        {tab === "validation" && <ValidationTab apiBase={apiBase} />}
+        {tab === "audit" && <AuditTab apiBase={apiBase} />}
+      </main>
+
+      {showAccount && me && (
+        <AccountPanel apiBase={apiBase} me={me} onClose={() => setShowAccount(false)} onChanged={loadMe} />
+      )}
+
+      <footer className="max-w-[1440px] mx-auto px-6 pb-6 text-xs text-sub">
+        Demo build with fictional data — L0/L1 rule checks are deterministic; risk scoring, NLP, and drafted appeals use clearly-labeled heuristic stand-ins pending real model training (PRD v1.1).
+      </footer>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
