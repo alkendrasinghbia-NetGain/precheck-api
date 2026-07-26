@@ -166,11 +166,11 @@ function SummaryTile({ n, label, tone }) {
 function LayerChip({ layer, dark }) {
   return <span className={`font-mono text-[11px] font-bold px-1.5 py-0.5 rounded ${dark ? "bg-ink text-page" : "bg-accentbg text-accent"}`}>{layer}</span>;
 }
-function SectionHead({ title, right, chip }) {
+function SectionHead({ title, right, chip, hint }) {
   return (
     <div className="px-5 py-3.5 border-b border-line flex items-center gap-2.5">
       {chip}
-      <h3 className="font-bold">{title}</h3>
+      <h3 className="font-bold" title={hint || undefined}>{title}</h3>
       {right && <span className="text-xs text-sub ml-auto">{right}</span>}
     </div>
   );
@@ -235,7 +235,7 @@ function PrevisitTab({ apiBase, onExceptionsChanged, navReq, go }) {
               <h2 className="font-bold text-ink">Pre-visit readiness</h2>
               <span className="font-mono text-xs text-sub">{cases.length} scheduled</span>
             </div>
-            <p className="text-xs text-sub mb-3">Nightly T-2 sweep of scheduled oncology visits</p>
+            <p className="text-xs text-sub mb-3">Checked automatically 2 days before each appointment</p>
             <div className="grid grid-cols-3 gap-2 mb-4">
               <SummaryTile n={ready} label="Go" tone="ok" />
               <SummaryTile n={action} label="Caution" tone="warn" />
@@ -285,7 +285,7 @@ function PrevisitTab({ apiBase, onExceptionsChanged, navReq, go }) {
                 </div>
               </Card>
               <Card>
-                <SectionHead title="Pre-visit checks" right="Triggered: Nightly sweep · T-2" />
+                <SectionHead title="Pre-visit checks" right="Last checked: 2 days before visit" />
                 <div className="divide-y divide-line">
                   {checkRows(selected).map((r, i) => (
                     <div key={i} className="px-5 py-3.5 flex items-start gap-3">
@@ -471,7 +471,7 @@ function DenialTab({ apiBase, navReq, go }) {
               </Card>
 
               <Card>
-                <SectionHead chip={<LayerChip layer="L1" dark />} title="Deterministic rule check" right="Rules engine · pass/fail, not a prediction" />
+                <SectionHead chip={<LayerChip layer="L1" dark />} title="Rule check (pass/fail)" right="Rules engine · pass/fail, not a prediction" />
                 <div className="p-5">
                   {selected.rule_blockers.length > 0 ? (
                     <React.Fragment>
@@ -503,7 +503,8 @@ function DenialTab({ apiBase, navReq, go }) {
               </Card>
 
               <Card>
-                <SectionHead chip={<LayerChip layer="L2" />} title="Model estimate" right="Heuristic stand-in · advisory, not a determination" />
+                <SectionHead chip={<LayerChip layer="L2" />} title="Risk estimate (advisory)" right="Heuristic stand-in · advisory, not a determination"
+                  hint={`Scoring version: ${selected.model_version}`} />
                 <div className="p-5">
                   <div className="flex items-center gap-3 mb-4">
                     <Pill tone={riskTone(selected.risk_level)}>{selected.risk_level}</Pill>
@@ -526,7 +527,6 @@ function DenialTab({ apiBase, navReq, go }) {
                       </div>
                     ))}
                   </div>
-                  <p className="text-xs text-sub mt-3 font-mono">{selected.model_version}</p>
                 </div>
               </Card>
 
@@ -1282,8 +1282,8 @@ function ExceptionsTab({ apiBase, refreshKey, navReq, go }) {
                           <div className="flex items-center gap-2">
                             <span className="font-mono text-xs font-semibold">{i.exception_id}</span>
                             <LayerChip layer={i.source_layer} />
-                            {i.blocks_service && <Pill tone="bad">Blocks service</Pill>}
-                            {i.escalated && <Pill tone="bad">ESCALATED &gt;24h</Pill>}
+                            {i.blocks_service && <Pill tone="bad">Must fix before visit</Pill>}
+                            {i.escalated && <Pill tone="bad">Unassigned 24h+</Pill>}
                           </div>
                           <Pill tone={statusTone(i.status)}>{i.status.replaceAll("_", " ")}</Pill>
                         </div>
@@ -1452,8 +1452,8 @@ function EdiTab({ apiBase, onDataChanged }) {
             placeholder="ISA*00*~ST*837*0001~CLM*..."
             className="w-full bg-page border border-line rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:border-accent" />
           <div className="mt-3 flex gap-2">
-            <Button variant="ghost" onClick={decode} disabled={!raw.trim()}>Decode &amp; preview</Button>
-            <Button onClick={ingest} disabled={!raw.trim()}>Ingest transaction</Button>
+            <Button variant="ghost" onClick={decode} disabled={!raw.trim()}>Preview file (nothing saved)</Button>
+            <Button onClick={ingest} disabled={!raw.trim()}>Import file</Button>
           </div>
           {result && (
             <div className="mt-4 bg-okbg rounded-lg px-4 py-3">
@@ -1521,7 +1521,7 @@ function EdiTab({ apiBase, onDataChanged }) {
           )}
           <Card>
             <div className="px-5 py-3.5 border-b border-line flex items-center justify-between">
-              <h3 className="font-bold">Ingest history</h3>
+              <h3 className="font-bold">Import history</h3>
               <span className="text-xs text-sub">{history.length} transactions</span>
             </div>
             <div className="divide-y divide-line max-h-[420px] overflow-y-auto">
@@ -1804,7 +1804,7 @@ function ConnectTab({ apiBase, go }) {
 
           <Card>
             <div className="px-5 py-3.5 border-b border-line flex items-center justify-between">
-              <h3 className="font-bold">Exchange log</h3>
+              <h3 className="font-bold">Message history</h3>
               <span className="text-xs text-sub">{log.length} transactions</span>
             </div>
             <div className="divide-y divide-line max-h-[380px] overflow-y-auto">
