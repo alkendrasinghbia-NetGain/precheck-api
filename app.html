@@ -38,13 +38,24 @@
   body[data-accent="indigo"] { --accent:#6D28D9; --accent-bg:#F0EAFD; --accent-sel:#F5F0FE; }
   body[data-accent="orange"] { --accent:#EA580C; --accent-bg:#FDEBDD; --accent-sel:#FEF3EA; }
   body.dark {
-    --page:#0F1520; --card:#161D2B; --ink:#E8ECF4; --sub:#93A0B4; --line:#273248;
-    --chip:#1F2A3D; --hover:#1B2436;
-    --accent:#5B8AF5; --accent-bg:#1B2A4A; --accent-sel:#182338;
-    --okt:#3ECF8E; --okbg:#123222; --warnt:#E5B04A; --warnbg:#33270E; --badt:#F0716A; --badbg:#3A1714;
+    /* Softer, lower-contrast dark theme: slate-blue surfaces, muted status
+       tints (status colour carried by text, not by loud fills). */
+    --page:#131722; --card:#1A2030; --ink:#DCE3EF; --sub:#8D9AAF; --line:#2A3346;
+    --chip:#222B3C; --hover:#202839;
+    --accent:#7BA2F7; --accent-bg:#1E2942; --accent-sel:#1C2436;
+    /* Status surfaces are neutral in dark mode — colour is carried by the
+       text and a hairline outline, so tiles read as cards, not warning lights. */
+    --okt:#6FD3A6; --warnt:#E7C486; --badt:#F0968F;
+    --okbg:#1E2637; --warnbg:#1E2637; --badbg:#1E2637;
   }
-  body.dark[data-accent="indigo"] { --accent:#9B72F2; --accent-bg:#2A1E4A; --accent-sel:#221A3A; }
-  body.dark[data-accent="orange"] { --accent:#FF9457; --accent-bg:#3B2311; --accent-sel:#2E1C0E; }
+  body.dark .bg-okbg   { border:1px solid rgba(111,211,166,.28); }
+  body.dark .bg-warnbg { border:1px solid rgba(231,196,134,.28); }
+  body.dark .bg-badbg  { border:1px solid rgba(240,150,143,.28); }
+  /* Pills sit on card surfaces — keep them flat and quiet */
+  body.dark span.bg-okbg, body.dark span.bg-warnbg, body.dark span.bg-badbg,
+  body.dark span.bg-accentbg { background:#232C3E; }
+  body.dark[data-accent="indigo"] { --accent:#A98BF5; --accent-bg:#272042; --accent-sel:#211C36; }
+  body.dark[data-accent="orange"] { --accent:#F5A472; --accent-bg:#332318; --accent-sel:#2A1E15; }
   body { background: var(--page); }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
@@ -94,7 +105,17 @@ function Pill({ children, tone }) {
 function riskTone(l) { return l === "LOW" ? "ok" : l === "MEDIUM" ? "warn" : "bad"; }
 function riskWord(l) { return l === "LOW" ? "Low" : l === "MEDIUM" ? "Medium" : l === "HIGH" ? "High" : "Critical"; }
 function readyTone(s) { return s === "READY" ? "ok" : s === "ACTION_NEEDED" ? "warn" : "bad"; }
-function readyWord(s) { return s === "READY" ? "Ready" : s === "ACTION_NEEDED" ? "Action needed" : "Blocked"; }
+// Pre-Visit only: traffic-light vocabulary for the scheduling queue
+function readyWord(s) { return s === "READY" ? "Go" : s === "ACTION_NEEDED" ? "Caution" : "Stop"; }
+function TrafficLegend() {
+  return (
+    <div className="flex items-center gap-3 text-[11px] text-sub mt-3 pt-3 border-t border-line flex-wrap">
+      <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-okt"></span><b className="text-okt">Go</b> — clear to proceed</span>
+      <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-warnt"></span><b className="text-warnt">Caution</b> — resolve before service</span>
+      <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-badt"></span><b className="text-badt">Stop</b> — will deny as submitted</span>
+    </div>
+  );
+}
 function statusTone(s) { return s === "RESOLVED" ? "ok" : s === "WAIVED" ? "gray" : s === "IN_PROGRESS" ? "warn" : "bad"; }
 function money(n) { return "$" + Number(n || 0).toLocaleString(); }
 
@@ -216,9 +237,9 @@ function PrevisitTab({ apiBase, onExceptionsChanged, navReq, go }) {
             </div>
             <p className="text-xs text-sub mb-3">Nightly T-2 sweep of scheduled oncology visits</p>
             <div className="grid grid-cols-3 gap-2 mb-4">
-              <SummaryTile n={ready} label="Ready" tone="ok" />
-              <SummaryTile n={action} label="Action" tone="warn" />
-              <SummaryTile n={blocked} label="Blocked" tone="bad" />
+              <SummaryTile n={ready} label="Go" tone="ok" />
+              <SummaryTile n={action} label="Caution" tone="warn" />
+              <SummaryTile n={blocked} label="Stop" tone="bad" />
             </div>
             <div className="divide-y divide-line -mx-4">
               {cases.map(c => (
@@ -237,6 +258,7 @@ function PrevisitTab({ apiBase, onExceptionsChanged, navReq, go }) {
               ))}
               {cases.length === 0 && <p className="px-4 py-3 text-sub text-sm">No cases scheduled.</p>}
             </div>
+            <TrafficLegend />
           </Card>
         </div>
 
@@ -255,9 +277,9 @@ function PrevisitTab({ apiBase, onExceptionsChanged, navReq, go }) {
                   <div>
                     <div className={`text-[10px] font-bold uppercase tracking-widest ${selected.readiness_status === "READY" ? "text-okt/70" : selected.readiness_status === "ACTION_NEEDED" ? "text-warnt/70" : "text-badt/70"}`}>Gate to claim precheck</div>
                     <div className={`font-semibold ${selected.readiness_status === "READY" ? "text-okt" : selected.readiness_status === "ACTION_NEEDED" ? "text-warnt" : "text-badt"}`}>
-                      {selected.readiness_status === "READY" ? "Clears into claim precheck"
-                        : selected.readiness_status === "ACTION_NEEDED" ? "Action needed — resolve before the visit"
-                        : "Blocked — resolve exceptions before the visit"}
+                      {selected.readiness_status === "READY" ? "GO — clears into claim precheck"
+                        : selected.readiness_status === "ACTION_NEEDED" ? "CAUTION — resolve before the visit"
+                        : "STOP — will deny unless resolved before the visit"}
                     </div>
                   </div>
                 </div>
@@ -1853,14 +1875,25 @@ function FhirTab({ apiBase, go }) {
       setPatients(null); setSummary(null);
     } catch (e2) { setError(e2.message); }
   }
-  async function search(e) {
-    e.preventDefault();
+  const [dob, setDob] = useState("");
+  const [sandbox, setSandbox] = useState(null);
+  useEffect(() => { api(apiBase, "/v1/fhir/sandbox-patients").then(setSandbox).catch(() => {}); }, [apiBase, config]);
+
+  async function doSearch(params) {
     setBusy(true); setSummary(null);
     try {
-      setPatients(await api(apiBase, "/v1/fhir/patients" + (query ? "?name=" + encodeURIComponent(query) : "")));
+      const qs = new URLSearchParams(params).toString();
+      setPatients(await api(apiBase, "/v1/fhir/patients" + (qs ? "?" + qs : "")));
       setError(null);
     } catch (e2) { setError(e2.message); setPatients(null); }
     setBusy(false);
+  }
+  function search(e) {
+    e.preventDefault();
+    const p = {};
+    if (query.trim()) p.name = query.trim();
+    if (dob) p.birthdate = dob;
+    doSearch(p);
   }
   async function openPatient(id) {
     setBusy(true);
@@ -1948,9 +1981,26 @@ function FhirTab({ apiBase, go }) {
           </Card>
           <Card className="p-5">
             <h3 className="font-bold mb-3">Find patients</h3>
-            <form onSubmit={search} className="flex gap-2">
-              <TextInput value={query} onChange={e => setQuery(e.target.value)} placeholder="Name (or empty for first 10)" />
-              <Button type="submit" disabled={busy}>{busy ? "…" : "Search"}</Button>
+            {sandbox && sandbox.is_epic && (
+              <div className="mb-3">
+                <Label>Epic sandbox patients (one click)</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {sandbox.patients.map(p => (
+                    <button key={p.label} onClick={() => doSearch({ given: p.given, family: p.family, birthdate: p.birthdate })}
+                      className="px-2.5 py-1 rounded-full text-xs font-semibold bg-chip text-sub hover:bg-accentbg hover:text-accent transition">
+                      {p.given} {p.family}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-sub mt-1.5">Epic requires exact demographics — free-text search alone returns nothing.</p>
+              </div>
+            )}
+            <form onSubmit={search} className="space-y-2">
+              <div className="flex gap-2">
+                <TextInput value={query} onChange={e => setQuery(e.target.value)} placeholder="First and last name" />
+                <TextInput type="date" value={dob} onChange={e => setDob(e.target.value)} className="w-40" title="Birth date (Epic matches on it)" />
+              </div>
+              <Button type="submit" disabled={busy}>{busy ? "Searching…" : "Search"}</Button>
             </form>
             {patients && (
               <div className="divide-y divide-line mt-3 -mx-5">
