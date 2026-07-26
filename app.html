@@ -2517,6 +2517,7 @@ function App() {
   const [authToken, setAuthToken] = useState(() => localStorage.getItem("ng_token") || "");
   const [me, setMe] = useState(null);
   const [showAccount, setShowAccount] = useState(false);
+  const [collapsed, setCollapsed] = useState({});   // sidebar group open/closed
 
   function go(targetTab, payload) {
     setNavReq({ tab: targetTab, ...payload, token: Date.now() });
@@ -2575,18 +2576,24 @@ function App() {
   // All hooks must run before this gate (React rules of hooks)
   if (!authToken) return <LoginScreen apiBase={apiBase} onLogin={handleLogin} />;
 
-  // Primary workflow stays in the top bar (as before)
-  const tabs = [
-    { id: "previsit", label: "Pre-Visit" },
-    { id: "denial", label: "Denial Prevention" },
-    { id: "eligibility", label: "Eligibility" },
-    { id: "coverage", label: "Coverage Rules" },
-    { id: "analytics", label: "Analytics" },
-    { id: "appeals", label: "Appeals", count: counts.appeals },
-    { id: "exceptions", label: "Exceptions", count: counts.exceptions },
-  ];
-  // Secondary destinations live in the left sidebar
+  // All destinations live in the left sidebar, grouped into collapsible menus
   const navGroups = [
+    {
+      title: "Workflow", items: [
+        { id: "previsit", label: "Pre-Visit" },
+        { id: "denial", label: "Denial Prevention" },
+        { id: "eligibility", label: "Eligibility" },
+        { id: "exceptions", label: "Exceptions", count: counts.exceptions },
+        { id: "appeals", label: "Appeals", count: counts.appeals },
+      ]
+    },
+    {
+      title: "Reference & insight", items: [
+        { id: "coverage", label: "Coverage Rules" },
+        { id: "analytics", label: "Analytics" },
+        { id: "validation", label: "Validation" },
+      ]
+    },
     {
       title: "Integrations", items: [
         { id: "edi", label: "EDI Intake" },
@@ -2594,14 +2601,13 @@ function App() {
         { id: "fhir", label: "FHIR / Epic" },
       ]
     },
-    {
-      title: "Assurance", items: [
-        { id: "validation", label: "Validation" },
-        { id: "audit", label: "Audit Log" },
-      ]
-    },
+    { title: "Governance", items: [{ id: "audit", label: "Audit Log" }] },
   ];
-  const allNav = [...tabs, ...navGroups.flatMap(g => g.items)];
+  const allNav = navGroups.flatMap(g => g.items);
+  const activeLabel = (allNav.find(t => t.id === tab) || {}).label || "";
+  function toggleGroup(title) {
+    setCollapsed(c => ({ ...c, [title]: !c[title] }));
+  }
 
   return (
     <div className="min-h-screen flex">
@@ -2616,19 +2622,33 @@ function App() {
             <div className="text-[10px] text-sub">Precheck AI</div>
           </div>
         </div>
-        <nav className="flex-1 overflow-y-auto py-3">
-          {navGroups.map(g => (
-            <div key={g.title} className="mb-3">
-              <div className="px-4 mb-1 text-[10px] font-bold uppercase tracking-widest text-sub">{g.title}</div>
-              {g.items.map(t => (
-                <button key={t.id} onClick={() => setTab(t.id)}
-                  className={`w-full text-left px-4 py-2 text-sm font-semibold flex items-center gap-2 border-l-[3px] transition ${tab === t.id ? "border-l-accent bg-accentsel text-accent" : "border-l-transparent text-sub hover:text-ink hover:bg-hoverbg"}`}>
-                  <span className="flex-1 truncate">{t.label}</span>
-                  {t.count > 0 && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${tab === t.id ? "bg-accent text-white" : "bg-chip text-sub"}`}>{t.count}</span>}
+        <nav className="flex-1 overflow-y-auto py-2">
+          {navGroups.map(g => {
+            const open = !collapsed[g.title];
+            const groupCount = g.items.reduce((s, i) => s + (i.count || 0), 0);
+            return (
+              <div key={g.title} className="mb-1">
+                <button onClick={() => toggleGroup(g.title)}
+                  className="w-full flex items-center gap-1.5 px-4 py-2 text-[11px] font-bold uppercase tracking-widest text-sub hover:text-ink transition">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"
+                    className={`transition-transform shrink-0 ${open ? "rotate-90" : ""}`}>
+                    <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span className="flex-1 text-left">{g.title}</span>
+                  {!open && groupCount > 0 && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-chip text-sub">{groupCount}</span>
+                  )}
                 </button>
-              ))}
-            </div>
-          ))}
+                {open && g.items.map(t => (
+                  <button key={t.id} onClick={() => setTab(t.id)}
+                    className={`w-full text-left pl-9 pr-4 py-2 text-sm font-semibold flex items-center gap-2 border-l-[3px] transition ${tab === t.id ? "border-l-accent bg-accentsel text-accent" : "border-l-transparent text-sub hover:text-ink hover:bg-hoverbg"}`}>
+                    <span className="flex-1 truncate">{t.label}</span>
+                    {t.count > 0 && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${tab === t.id ? "bg-accent text-white" : "bg-chip text-sub"}`}>{t.count}</span>}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
         </nav>
         {/* account + appearance + API target live at the foot of the sidebar */}
         <div className="border-t border-line shrink-0 p-3 space-y-2.5">
@@ -2675,16 +2695,12 @@ function App() {
         Demonstration environment — all data is fictional · not for clinical or billing use · do not enter PHI
       </div>
       <header className="bg-card border-b border-line sticky top-0 z-10">
-        <div className="px-6 h-16 flex items-center gap-5">
-          <nav className="flex items-center gap-0.5 flex-1 min-w-0 overflow-x-auto">
-            {tabs.map(t => (
-              <button key={t.id} onClick={() => setTab(t.id)}
-                className={`px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5 whitespace-nowrap transition ${tab === t.id ? "bg-accentbg text-accent" : "text-sub hover:text-ink"}`}>
-                {t.label}
-                {t.count > 0 && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${tab === t.id ? "bg-accent text-white" : "bg-chip text-sub"}`}>{t.count}</span>}
-              </button>
-            ))}
-          </nav>
+        <div className="px-6 h-14 flex items-center gap-3">
+          <span className="text-[11px] uppercase tracking-widest text-sub">
+            {(navGroups.find(g => g.items.some(i => i.id === tab)) || {}).title}
+          </span>
+          <span className="text-sub">/</span>
+          <h1 className="font-bold text-[15px]">{activeLabel}</h1>
         </div>
       </header>
 
