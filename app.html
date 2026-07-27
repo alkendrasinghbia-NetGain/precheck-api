@@ -37,6 +37,8 @@
   }
   body[data-accent="indigo"] { --accent:#6D28D9; --accent-bg:#F0EAFD; --accent-sel:#F5F0FE; }
   body[data-accent="orange"] { --accent:#EA580C; --accent-bg:#FDEBDD; --accent-sel:#FEF3EA; }
+  body[data-accent="teal"]   { --accent:#2E8B8B; --accent-bg:#E2F1F1; --accent-sel:#EDF7F7; }
+  body[data-accent="navy"]   { --accent:#1F3864; --accent-bg:#E3E8F1; --accent-sel:#EEF1F7; }
   body.dark {
     /* Softer, lower-contrast dark theme: slate-blue surfaces, muted status
        tints (status colour carried by text, not by loud fills). */
@@ -56,6 +58,9 @@
   body.dark span.bg-accentbg { background:#232C3E; }
   body.dark[data-accent="indigo"] { --accent:#A98BF5; --accent-bg:#272042; --accent-sel:#211C36; }
   body.dark[data-accent="orange"] { --accent:#F5A472; --accent-bg:#332318; --accent-sel:#2A1E15; }
+  body.dark[data-accent="teal"]   { --accent:#5FC7C7; --accent-bg:#16302F; --accent-sel:#152726; }
+  /* navy is too dark to read on a dark page — lift it to a soft steel blue */
+  body.dark[data-accent="navy"]   { --accent:#8FB0E0; --accent-bg:#1E2740; --accent-sel:#1B2235; }
   body { background: var(--page); }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
@@ -2500,6 +2505,8 @@ const ACCENTS = [
   { id: "blue", dot: "#2F5FE3" },
   { id: "indigo", dot: "#6D28D9" },
   { id: "orange", dot: "#EA580C" },
+  { id: "teal", dot: "#2E8B8B" },
+  { id: "navy", dot: "#1F3864" },
 ];
 
 function App() {
@@ -2661,15 +2668,18 @@ function App() {
             {me && me.mfa_enabled && <span className="text-okt text-[10px]" title="MFA enabled">✓ MFA</span>}
           </button>
 
+          {/* colour swatches get their own row so all five always fit */}
+          <div className="flex items-center justify-between bg-page border border-line rounded-full px-2.5 py-1.5">
+            {ACCENTS.map(a => (
+              <button key={a.id} onClick={() => setAccent(a.id)} title={`${a.id} theme`}
+                aria-label={`${a.id} theme`}
+                className={`rounded-full transition ${accent === a.id ? "ring-2 ring-offset-1 ring-accent" : "hover:scale-110"}`}
+                style={{ backgroundColor: a.dot, width: 16, height: 16 }}></button>
+            ))}
+          </div>
+
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 bg-page border border-line rounded-full px-2 py-1.5">
-              {ACCENTS.map(a => (
-                <button key={a.id} onClick={() => setAccent(a.id)} title={a.id}
-                  className={`rounded-full transition ${accent === a.id ? "ring-2 ring-offset-1 ring-accent" : ""}`}
-                  style={{ backgroundColor: a.dot, width: 16, height: 16 }}></button>
-              ))}
-            </div>
-            <button onClick={() => setDark(d => !d)} title={dark ? "Light mode" : "Dark mode"}
+            <button onClick={() => setDark(d => !d)} title={dark ? "Switch to light mode" : "Switch to dark mode"}
               className="w-8 h-8 rounded-full bg-page border border-line flex items-center justify-center text-sub hover:text-ink transition shrink-0">
               {dark
                 ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" strokeLinecap="round"/></svg>
